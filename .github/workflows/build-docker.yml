@@ -9,7 +9,7 @@ on:
       runner-arm64:
         description: "Runner for native linux/arm64 builds"
         type: string
-        default: pi-arm64
+        default: pi-arm64-dind
       image-name:
         description: "Image name under ghcr.io/<owner>/"
         type: string

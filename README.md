@@ -56,7 +56,7 @@ jobs:
 | Input | Default | Description |
 |---|---|---|
 | `runner` | `asus-amd64-dind` | Runner label for amd64 builds |
-| `runner-arm64` | `pi-arm64` | Runner label for native arm64 builds |
+| `runner-arm64` | `pi-arm64-dind` | Runner label for native arm64 builds |
 | `image-name` | required | Image name under `ghcr.io/<owner>/` |
 | `platforms` | `""` | Multi-platform targets, e.g. `linux/amd64,linux/arm64`. Empty = native arch only (single job). |
 | `no-cache` | `false` | Pass `no-cache: true` to docker/build-push-action |
