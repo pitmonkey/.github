@@ -64,6 +64,8 @@ Image is pushed only on non-PR events. QEMU is set up automatically when `platfo
 
 **Required org secrets:** none (uses auto-provided `GITHUB_TOKEN`)
 
+**Required caller permissions:** the calling job must declare `permissions: { contents: read, packages: write }` — reusable workflows cannot elevate beyond what the caller grants.
+
 ---
 
 ### `notify-slack.yml` — Post CI status to Slack
@@ -148,6 +150,9 @@ jobs:
     with:
       image-name: my-service
       platforms: linux/amd64,linux/arm64
+    permissions:
+      contents: read
+      packages: write
     secrets: inherit
 
   notify:
