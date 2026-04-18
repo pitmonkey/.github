@@ -55,12 +55,13 @@ jobs:
 
 | Input | Default | Description |
 |---|---|---|
-| `runner` | `asus-amd64-dind` | Runner label |
+| `runner` | `asus-amd64-dind` | Runner label for amd64 builds |
+| `runner-arm64` | `pi-arm64` | Runner label for native arm64 builds |
 | `image-name` | required | Image name under `ghcr.io/<owner>/` |
-| `platforms` | `""` | Multi-platform targets, e.g. `linux/amd64,linux/arm64`. Empty = native arch. |
+| `platforms` | `""` | Multi-platform targets, e.g. `linux/amd64,linux/arm64`. Empty = native arch only (single job). |
 | `no-cache` | `false` | Pass `no-cache: true` to docker/build-push-action |
 
-Image is pushed only on non-PR events. QEMU is set up automatically when `platforms` is non-empty.
+Image is pushed only on non-PR events. When `platforms` is non-empty, each platform builds natively on its own runner and the manifests are merged — no QEMU emulation.
 
 **Required org secrets:** none (uses auto-provided `GITHUB_TOKEN`)
 

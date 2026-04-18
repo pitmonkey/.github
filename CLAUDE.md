@@ -31,7 +31,7 @@ All callers use `secrets: inherit` — no secret forwarding needed in the caller
 - All inputs must have sensible defaults so callers only specify overrides
 - Keep jobs to one concern per file (test, lint, build, notify are separate)
 - Document every input in README.md when adding or changing one
-- The standard runners are `pi-arm64` (test/lint/notify) and `asus-amd64-dind` (Docker build)
+- The standard runners are `pi-arm64` (test/lint/notify and arm64 Docker builds) and `asus-amd64-dind` (amd64 Docker builds)
 
 ## Org setup required
 
