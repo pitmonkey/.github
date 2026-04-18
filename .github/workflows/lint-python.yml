@@ -1,0 +1,28 @@
+name: Reusable - Lint Python
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: pi-arm64
+      uv-sync-args:
+        type: string
+        default: ""
+      lint-path:
+        type: string
+        default: "."
+      run-mypy:
+        type: boolean
+        default: true
+
+jobs:
+  lint:
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: astral-sh/setup-uv@v8.0.0
+      - run: uv sync ${{ inputs.uv-sync-args }}
+      - run: uv run ruff check ${{ inputs.lint-path }}
+      - if: ${{ inputs.run-mypy }}
+        run: uv run mypy ${{ inputs.lint-path }}

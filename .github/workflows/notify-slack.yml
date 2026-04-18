@@ -1,0 +1,111 @@
+name: Reusable - Notify Slack
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: pi-arm64
+      project-name:
+        type: string
+        required: true
+      test-result:
+        type: string
+        default: ""
+      lint-result:
+        type: string
+        default: ""
+      build-result:
+        description: "Pass 'skipped' explicitly if no build job was used."
+        type: string
+        default: "skipped"
+    secrets:
+      SLACK_BOT_TOKEN:
+        required: true
+      SLACK_CHANNEL_ID:
+        required: true
+
+jobs:
+  notify:
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - name: Determine overall status
+        id: status
+        run: |
+          TEST="${{ inputs.test-result }}"
+          LINT="${{ inputs.lint-result }}"
+          BUILD="${{ inputs.build-result }}"
+
+          if [[ "$TEST" == "success" && "$LINT" == "success" && \
+                ("$BUILD" == "success" || "$BUILD" == "skipped") ]]; then
+            echo "icon=✅" >> "$GITHUB_OUTPUT"
+            echo "text=CI Passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "icon=❌" >> "$GITHUB_OUTPUT"
+            echo "text=CI Failed" >> "$GITHUB_OUTPUT"
+          fi
+          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+          case "$TEST" in
+            success) echo "test_emoji=✅" >> "$GITHUB_OUTPUT" ;;
+            failure) echo "test_emoji=❌" >> "$GITHUB_OUTPUT" ;;
+            *)       echo "test_emoji=⏭"  >> "$GITHUB_OUTPUT" ;;
+          esac
+          case "$LINT" in
+            success) echo "lint_emoji=✅" >> "$GITHUB_OUTPUT" ;;
+            failure) echo "lint_emoji=❌" >> "$GITHUB_OUTPUT" ;;
+            *)       echo "lint_emoji=⏭"  >> "$GITHUB_OUTPUT" ;;
+          esac
+          case "$BUILD" in
+            success) echo "build_emoji=✅" >> "$GITHUB_OUTPUT" ;;
+            failure) echo "build_emoji=❌" >> "$GITHUB_OUTPUT" ;;
+            *)       echo "build_emoji=⏭"  >> "$GITHUB_OUTPUT" ;;
+          esac
+
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          if [[ -n "$PR_NUMBER" ]]; then
+            echo "pr_text=<${PR_URL}|#${PR_NUMBER}>" >> "$GITHUB_OUTPUT"
+          else
+            echo "pr_text=n/a" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: slackapi/slack-github-action@v3.0.1
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            {
+              "channel": "${{ secrets.SLACK_CHANNEL_ID }}",
+              "text": "${{ steps.status.outputs.icon }} ${{ steps.status.outputs.text }} — ${{ inputs.project-name }}",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "${{ steps.status.outputs.icon }} ${{ steps.status.outputs.text }} — ${{ inputs.project-name }}"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    { "type": "mrkdwn", "text": "*Branch:*\n${{ github.head_ref || github.ref_name }}" },
+                    { "type": "mrkdwn", "text": "*Commit:*\n<${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|${{ steps.status.outputs.short_sha }}>" },
+                    { "type": "mrkdwn", "text": "*PR:*\n${{ steps.status.outputs.pr_text }}" },
+                    { "type": "mrkdwn", "text": "*Tests:*\n${{ steps.status.outputs.test_emoji }}" },
+                    { "type": "mrkdwn", "text": "*Lint:*\n${{ steps.status.outputs.lint_emoji }}" },
+                    { "type": "mrkdwn", "text": "*Build:*\n${{ steps.status.outputs.build_emoji }}" }
+                  ]
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": { "type": "plain_text", "text": "View Run" },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
+                }
+              ]
+            }

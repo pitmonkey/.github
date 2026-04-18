@@ -1,0 +1,34 @@
+name: Reusable - Add Issue to Project
+
+on:
+  workflow_call:
+    inputs:
+      project-id:
+        description: "Node ID of the org-level GitHub ProjectV2 (format: PVT_kwDO...)"
+        type: string
+        required: true
+    secrets:
+      PROJECT_PAT:
+        description: "Classic PAT with 'project' scope for writing to org-level projects"
+        required: true
+
+jobs:
+  add-to-project:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add issue to project
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+          PROJECT_ID: ${{ inputs.project-id }}
+          ISSUE_NODE_ID: ${{ github.event.issue.node_id }}
+        run: |
+          gh api graphql -f query='
+            mutation($projectId: ID!, $contentId: ID!) {
+              addProjectV2ItemById(input: {
+                projectId: $projectId
+                contentId: $contentId
+              }) {
+                item { id }
+              }
+            }
+          ' -f projectId="$PROJECT_ID" -f contentId="$ISSUE_NODE_ID"
