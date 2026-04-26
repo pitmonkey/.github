@@ -40,6 +40,8 @@ All callers use `secrets: inherit` — no secret forwarding needed in the caller
 | `SLACK_BOT_TOKEN` | Slack notifications |
 | `SLACK_CHANNEL_ID` | Slack channel |
 | `PROJECT_PAT` | Classic PAT with `project` scope for org project board |
+| `DOCKERHUB_USERNAME` | Docker Hub login — avoids pull rate limits (optional, used when `dockerhub-auth: true`) |
+| `DOCKERHUB_TOKEN` | Docker Hub access token (pair with `DOCKERHUB_USERNAME`) |
 
 | Variable | Purpose |
 |---|---|
