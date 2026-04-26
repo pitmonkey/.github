@@ -60,12 +60,15 @@ jobs:
 | `image-name` | required | Image name under `ghcr.io/<owner>/` |
 | `platforms` | `""` | Multi-platform targets, e.g. `linux/amd64,linux/arm64`. Empty = native arch only (single job). |
 | `no-cache` | `false` | Pass `no-cache: true` to docker/build-push-action |
+| `dockerhub-auth` | `false` | Login to Docker Hub to bypass pull rate limits (requires `DOCKERHUB_USERNAME` + `DOCKERHUB_TOKEN` secrets) |
 
 Image is pushed only on non-PR events. When `platforms` is non-empty, each platform builds natively on its own runner and the manifests are merged — no QEMU emulation.
 
-**Required org secrets:** none (uses auto-provided `GITHUB_TOKEN`)
+Docker build layers are cached in GitHub Actions cache (`type=gha`) automatically. Multi-platform builds use per-platform cache scopes to avoid collisions. Pass `no-cache: true` to skip cache entirely.
 
-**Required caller permissions:** the calling job must declare `permissions: { contents: read, packages: write }` — reusable workflows cannot elevate beyond what the caller grants.
+**Required org secrets:** none (uses auto-provided `GITHUB_TOKEN`). For Docker Hub auth: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`.
+
+**Required caller permissions:** the calling job must declare `permissions: { contents: read, packages: write, actions: write }` — reusable workflows cannot elevate beyond what the caller grants. `actions: write` is needed for GHA cache writes.
 
 ---
 
@@ -154,6 +157,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      actions: write
     secrets: inherit
 
   notify:
