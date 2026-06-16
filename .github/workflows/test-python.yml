@@ -17,7 +17,7 @@ jobs:
   test:
     runs-on: ${{ inputs.runner }}
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: astral-sh/setup-uv@v8.1.0
+      - uses: actions/checkout@v6.0.3
+      - uses: astral-sh/setup-uv@v8.2.0
       - run: uv sync ${{ inputs.uv-sync-args }}
       - run: uv run pytest ${{ inputs.test-path }} -v

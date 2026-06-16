@@ -20,8 +20,8 @@ jobs:
   lint:
     runs-on: ${{ inputs.runner }}
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: astral-sh/setup-uv@v8.1.0
+      - uses: actions/checkout@v6.0.3
+      - uses: astral-sh/setup-uv@v8.2.0
       - run: uv sync ${{ inputs.uv-sync-args }}
       - run: uv run ruff check ${{ inputs.lint-path }}
       - if: ${{ inputs.run-mypy }}
