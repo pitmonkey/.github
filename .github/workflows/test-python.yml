@@ -21,7 +21,7 @@ jobs:
   test:
     runs-on: ${{ inputs.runner }}
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: astral-sh/setup-uv@v8.2.0
       - run: uv sync ${{ inputs.uv-sync-args }}
         working-directory: ${{ inputs.working-directory }}
