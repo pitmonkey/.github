@@ -14,6 +14,14 @@ on:
         description: "Image name under ghcr.io/<owner>/"
         type: string
         required: true
+      dockerfile:
+        description: "Path to the Dockerfile (for monorepos with subpath Dockerfiles)."
+        type: string
+        default: Dockerfile
+      build-context:
+        description: "Docker build context. Default = repo root."
+        type: string
+        default: "."
       platforms:
         description: "Multi-platform targets, e.g. 'linux/amd64,linux/arm64'. Empty = native arch only."
         type: string
@@ -64,7 +72,8 @@ jobs:
 
       - uses: docker/build-push-action@v7
         with:
-          context: .
+          context: ${{ inputs.build-context }}
+          file: ${{ inputs.dockerfile }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           no-cache: ${{ inputs.no-cache }}
@@ -114,7 +123,8 @@ jobs:
       - id: push
         uses: docker/build-push-action@v7
         with:
-          context: .
+          context: ${{ inputs.build-context }}
+          file: ${{ inputs.dockerfile }}
           platforms: ${{ matrix.platform }}
           push: ${{ github.event_name != 'pull_request' }}
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }},push-by-digest=true,name-canonical=true

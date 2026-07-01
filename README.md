@@ -16,6 +16,7 @@ jobs:
 | Input | Default | Description |
 |---|---|---|
 | `runner` | `pi-arm64` | Runner label |
+| `working-directory` | `.` | Directory to run in (monorepo subpackages) |
 | `uv-sync-args` | `""` | Extra args to `uv sync` (e.g. `--extra dev`) |
 | `test-path` | `tests/` | Path passed to pytest |
 
@@ -35,8 +36,10 @@ jobs:
 | Input | Default | Description |
 |---|---|---|
 | `runner` | `pi-arm64` | Runner label |
+| `working-directory` | `.` | Directory to run in (monorepo subpackages) |
 | `uv-sync-args` | `""` | Extra args to `uv sync` |
-| `lint-path` | `"."` | Path for `ruff check` and `mypy` |
+| `lint-path` | `"."` | Path for `ruff check` (and `mypy`, unless `mypy-path` is set) |
+| `mypy-path` | `""` | Separate path for `mypy` (e.g. the package dir, so `ruff` lints tests while `mypy` stays scoped). Empty = use `lint-path` |
 | `run-mypy` | `true` | Whether to run mypy |
 
 ---
@@ -58,6 +61,8 @@ jobs:
 | `runner` | `asus-amd64-dind` | Runner label for amd64 builds |
 | `runner-arm64` | `pi-arm64-dind` | Runner label for native arm64 builds |
 | `image-name` | required | Image name under `ghcr.io/<owner>/` |
+| `dockerfile` | `Dockerfile` | Path to the Dockerfile (monorepos with subpath Dockerfiles) |
+| `build-context` | `.` | Docker build context (default = repo root) |
 | `platforms` | `""` | Multi-platform targets, e.g. `linux/amd64,linux/arm64`. Empty = native arch only (single job). |
 | `no-cache` | `false` | Pass `no-cache: true` to docker/build-push-action |
 | `dockerhub-auth` | `false` | Login to Docker Hub to bypass pull rate limits (requires `DOCKERHUB_USERNAME` + `DOCKERHUB_TOKEN` secrets) |
