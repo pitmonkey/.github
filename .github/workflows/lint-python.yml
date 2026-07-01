@@ -6,12 +6,21 @@ on:
       runner:
         type: string
         default: pi-arm64
+      working-directory:
+        description: "Directory to run in (for monorepos). Default = repo root."
+        type: string
+        default: "."
       uv-sync-args:
         type: string
         default: ""
       lint-path:
+        description: "Path for ruff check (and mypy, unless mypy-path is set)."
         type: string
         default: "."
+      mypy-path:
+        description: "Separate path for mypy (e.g. the package dir, so ruff can lint tests while mypy stays scoped). Empty = use lint-path."
+        type: string
+        default: ""
       run-mypy:
         type: boolean
         default: true
@@ -23,6 +32,9 @@ jobs:
       - uses: actions/checkout@v6.0.3
       - uses: astral-sh/setup-uv@v8.2.0
       - run: uv sync ${{ inputs.uv-sync-args }}
+        working-directory: ${{ inputs.working-directory }}
       - run: uv run ruff check ${{ inputs.lint-path }}
+        working-directory: ${{ inputs.working-directory }}
       - if: ${{ inputs.run-mypy }}
-        run: uv run mypy ${{ inputs.lint-path }}
+        run: uv run mypy ${{ inputs.mypy-path != '' && inputs.mypy-path || inputs.lint-path }}
+        working-directory: ${{ inputs.working-directory }}

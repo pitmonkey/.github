@@ -6,6 +6,10 @@ on:
       runner:
         type: string
         default: pi-arm64
+      working-directory:
+        description: "Directory to run in (for monorepos). Default = repo root."
+        type: string
+        default: "."
       uv-sync-args:
         type: string
         default: ""
@@ -20,4 +24,6 @@ jobs:
       - uses: actions/checkout@v6.0.3
       - uses: astral-sh/setup-uv@v8.2.0
       - run: uv sync ${{ inputs.uv-sync-args }}
+        working-directory: ${{ inputs.working-directory }}
       - run: uv run pytest ${{ inputs.test-path }} -v
+        working-directory: ${{ inputs.working-directory }}
