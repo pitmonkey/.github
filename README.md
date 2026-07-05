@@ -83,7 +83,12 @@ Images that drive the Claude Agent SDK need a Python runtime, a Node runtime, th
 
 - **Definition:** `images/claude-worker-base/Dockerfile` (Node is copied from `node:22-trixie-slim`, matching `python:3.14-slim`'s Debian release, instead of the 360-package `apt-get install nodejs npm`).
 - **Published by:** `.github/workflows/build-claude-worker-base.yml` → `ghcr.io/pitmonkey/claude-worker-base:latest`, on changes to the base Dockerfile plus a weekly schedule (to pick up new `@anthropic-ai/claude-code` releases).
-- **Package visibility:** set the `claude-worker-base` package to **internal** (Packages → package → Settings → Change visibility) so every org repo can pull it. `build-docker.yml` logs into ghcr on all events — including PRs — so consumer PR builds can pull it; a private (repo-scoped) package would 401 from other repos.
+- **Package access:** the package stays **private**. Grant each consuming repo pull access under
+  Packages → `claude-worker-base` → Package settings → **Manage Actions access** → *Add repository*
+  (Read): `github-dispatcher`, `claude-pr-agent`, and any future consumer. `build-docker.yml` logs
+  into ghcr on all events — including PRs — so a granted repo's `GITHUB_TOKEN` can pull the base;
+  without the grant, other repos 401. (Org-wide `internal` visibility would also work but is
+  disabled by the org admins here.)
 
 Consumer images use it as their base and drop the Node/CLI install entirely:
 
