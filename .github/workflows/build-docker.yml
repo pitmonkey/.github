@@ -77,8 +77,12 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           no-cache: ${{ inputs.no-cache }}
-          cache-from: ${{ !inputs.no-cache && 'type=gha' || '' }}
-          cache-to: ${{ !inputs.no-cache && 'type=gha,mode=max' || '' }}
+          # Registry cache colocated on ghcr (self-hosted runners have no local
+          # layer cache and no LAN registry). Only read/write cache on non-PR
+          # events: PRs push nothing, so exporting a fresh cache there just burns
+          # wall-clock (mode=max export dominated the old ~28min PR builds).
+          cache-from: ${{ (!inputs.no-cache && github.event_name != 'pull_request') && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache', github.repository_owner, inputs.image-name) || '' }}
+          cache-to: ${{ (!inputs.no-cache && github.event_name != 'pull_request') && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true,compression=zstd', github.repository_owner, inputs.image-name) || '' }}
 
   build-multiplatform:
     if: inputs.platforms != ''
@@ -129,8 +133,10 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }},push-by-digest=true,name-canonical=true
           no-cache: ${{ inputs.no-cache }}
-          cache-from: ${{ !inputs.no-cache && format('type=gha,scope={0}', env.PLATFORM_PAIR) || '' }}
-          cache-to: ${{ !inputs.no-cache && format('type=gha,mode=max,scope={0}', env.PLATFORM_PAIR) || '' }}
+          # Per-platform registry cache tag; only on non-PR events (see the
+          # single-arch build job above for rationale).
+          cache-from: ${{ (!inputs.no-cache && github.event_name != 'pull_request') && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache-{2}', github.repository_owner, inputs.image-name, env.PLATFORM_PAIR) || '' }}
+          cache-to: ${{ (!inputs.no-cache && github.event_name != 'pull_request') && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache-{2},mode=max,image-manifest=true,oci-mediatypes=true,compression=zstd', github.repository_owner, inputs.image-name, env.PLATFORM_PAIR) || '' }}
 
       - if: github.event_name != 'pull_request'
         run: |

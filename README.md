@@ -69,11 +69,30 @@ jobs:
 
 Image is pushed only on non-PR events. When `platforms` is non-empty, each platform builds natively on its own runner and the manifests are merged — no QEMU emulation.
 
-Docker build layers are cached in GitHub Actions cache (`type=gha`) automatically. Multi-platform builds use per-platform cache scopes to avoid collisions. Pass `no-cache: true` to skip cache entirely.
+Build cache is stored as a registry image on GHCR at `ghcr.io/<owner>/<image-name>:buildcache` (multi-platform builds use a per-platform `:buildcache-<platform>` tag to avoid collisions). Cache is read and written **only on non-PR events** — PRs push no image, and on self-hosted runners exporting a fresh `mode=max` cache per PR dominated wall-clock (it was ~25 min of the old ~28 min PR builds). Pass `no-cache: true` to skip cache entirely.
 
 **Required org secrets:** none (uses auto-provided `GITHUB_TOKEN`). For Docker Hub auth: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`.
 
-**Required caller permissions:** the calling job must declare `permissions: { contents: read, packages: write, actions: write }` — reusable workflows cannot elevate beyond what the caller grants. `actions: write` is needed for GHA cache writes.
+**Required caller permissions:** the calling job must declare `permissions: { contents: read, packages: write, actions: write }` — reusable workflows cannot elevate beyond what the caller grants. `packages: write` covers both the image push and the registry build cache; `actions: write` is used by the multi-platform digest artifact upload.
+
+---
+
+### `claude-worker-base` — shared base image for Claude Agent SDK workers
+
+Images that drive the Claude Agent SDK need a Python runtime, a Node runtime, the Claude Code CLI, and `uv`. Installing that (`npm -g @anthropic-ai/claude-code` on a Debian Node install) produces a large, slow-to-export layer — on self-hosted runners it dominated build time. That layer is baked **once** into a shared base image so consumer builds only rebuild their own small Python layers.
+
+- **Definition:** `images/claude-worker-base/Dockerfile` (Node is copied from `node:22-trixie-slim`, matching `python:3.14-slim`'s Debian release, instead of the 360-package `apt-get install nodejs npm`).
+- **Published by:** `.github/workflows/build-claude-worker-base.yml` → `ghcr.io/pitmonkey/claude-worker-base:latest`, on changes to the base Dockerfile plus a weekly schedule (to pick up new `@anthropic-ai/claude-code` releases).
+
+Consumer images use it as their base and drop the Node/CLI install entirely:
+
+```dockerfile
+FROM ghcr.io/pitmonkey/claude-worker-base:latest
+WORKDIR /src/app
+COPY app/pyproject.toml app/uv.lock ./
+RUN uv sync --no-dev --frozen
+COPY app/*.py ./
+```
 
 ---
 
