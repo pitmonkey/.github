@@ -1,0 +1,29 @@
+name: Build claude-worker-base
+
+# Publishes the shared base image (python + node + claude-code + uv) that
+# consumer worker images FROM. Building the expensive node/claude-code layer
+# here — once, on change or weekly — keeps per-PR consumer builds tiny.
+on:
+  push:
+    branches: [main]
+    paths:
+      - images/claude-worker-base/**
+      - .github/workflows/build-claude-worker-base.yml
+  schedule:
+    # Weekly, to pick up new @anthropic-ai/claude-code releases.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-docker.yml
+    permissions:
+      contents: read
+      packages: write
+      actions: write
+    secrets: inherit
+    with:
+      image-name: claude-worker-base
+      dockerfile: images/claude-worker-base/Dockerfile
+      build-context: images/claude-worker-base
+      platforms: linux/amd64,linux/arm64
