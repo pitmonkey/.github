@@ -80,10 +80,12 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           no-cache: ${{ inputs.no-cache }}
           # Registry cache colocated on ghcr (self-hosted runners have no local
-          # layer cache and no LAN registry). Only read/write cache on non-PR
-          # events: PRs push nothing, so exporting a fresh cache there just burns
-          # wall-clock (mode=max export dominated the old ~28min PR builds).
-          cache-from: ${{ (!inputs.no-cache && github.event_name != 'pull_request') && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache', github.repository_owner, inputs.image-name) || '' }}
+          # layer cache and no LAN registry). READ cache on all events — a fresh
+          # ephemeral pod pulls the remote buildcache tag to reuse layers,
+          # including on PRs. Only WRITE cache on non-PR events: PRs push nothing,
+          # so exporting a fresh mode=max cache there just burns wall-clock (it
+          # dominated the old ~28min PR builds).
+          cache-from: ${{ !inputs.no-cache && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache', github.repository_owner, inputs.image-name) || '' }}
           cache-to: ${{ (!inputs.no-cache && github.event_name != 'pull_request') && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true,compression=zstd', github.repository_owner, inputs.image-name) || '' }}
 
   build-multiplatform:
@@ -137,9 +139,9 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }},push-by-digest=true,name-canonical=true
           no-cache: ${{ inputs.no-cache }}
-          # Per-platform registry cache tag; only on non-PR events (see the
-          # single-arch build job above for rationale).
-          cache-from: ${{ (!inputs.no-cache && github.event_name != 'pull_request') && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache-{2}', github.repository_owner, inputs.image-name, env.PLATFORM_PAIR) || '' }}
+          # Per-platform registry cache tag. Read on all events (incl. PRs);
+          # write only on non-PR events (see single-arch build job for rationale).
+          cache-from: ${{ !inputs.no-cache && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache-{2}', github.repository_owner, inputs.image-name, env.PLATFORM_PAIR) || '' }}
           cache-to: ${{ (!inputs.no-cache && github.event_name != 'pull_request') && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache-{2},mode=max,image-manifest=true,oci-mediatypes=true,compression=zstd', github.repository_owner, inputs.image-name, env.PLATFORM_PAIR) || '' }}
 
       - if: github.event_name != 'pull_request'
