@@ -70,7 +70,7 @@ jobs:
             echo "pr_text=n/a" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: slackapi/slack-github-action@v3.0.3
+      - uses: slackapi/slack-github-action@v3.0.5
         with:
           method: chat.postMessage
           token: ${{ secrets.SLACK_BOT_TOKEN }}
