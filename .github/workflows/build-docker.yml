@@ -66,7 +66,7 @@ jobs:
 
       - name: Compute sortable image tag
         id: sortable
-        run: echo "tag=${GITHUB_REF_NAME}-${GITHUB_SHA:0:7}-$(date +%s)" >> "$GITHUB_OUTPUT"
+        run: echo "tag=${GITHUB_REF_NAME//\//-}-${GITHUB_SHA:0:7}-$(date +%s)" >> "$GITHUB_OUTPUT"
 
       - id: meta
         uses: docker/metadata-action@v6
@@ -75,7 +75,7 @@ jobs:
           tags: |
             type=raw,value=latest
             type=sha,prefix=sha-,format=short
-            type=raw,value=${{ steps.sortable.outputs.tag }}
+            type=raw,value=${{ steps.sortable.outputs.tag }},enable=${{ github.event_name != 'pull_request' }}
 
       - uses: docker/build-push-action@v7
         with:
@@ -183,7 +183,7 @@ jobs:
 
       - name: Compute sortable image tag
         id: sortable
-        run: echo "tag=${GITHUB_REF_NAME}-${GITHUB_SHA:0:7}-$(date +%s)" >> "$GITHUB_OUTPUT"
+        run: echo "tag=${GITHUB_REF_NAME//\//-}-${GITHUB_SHA:0:7}-$(date +%s)" >> "$GITHUB_OUTPUT"
 
       - id: meta
         uses: docker/metadata-action@v6
@@ -192,7 +192,7 @@ jobs:
           tags: |
             type=raw,value=latest
             type=sha,prefix=sha-,format=short
-            type=raw,value=${{ steps.sortable.outputs.tag }}
+            type=raw,value=${{ steps.sortable.outputs.tag }},enable=${{ github.event_name != 'pull_request' }}
 
       - uses: docker/login-action@v4
         with:
