@@ -178,7 +178,13 @@ jobs:
       - if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
-          name: digests-${{ env.PLATFORM_PAIR }}
+          # Namespace by image-name: a caller that builds several images in one run
+          # invokes this reusable workflow once per image, and artifacts are scoped
+          # to the whole run. Without the image-name qualifier every image's merge
+          # would pull every other image's per-arch digests (pattern digests-* +
+          # merge-multiple) and assemble a manifest from foreign digests -> the
+          # intermittent `@sha256:...: not found` seen across a multi-image repo.
+          name: digests-${{ inputs.image-name }}-${{ env.PLATFORM_PAIR }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -196,7 +202,8 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           path: /tmp/digests
-          pattern: digests-*
+          # Only this image's per-arch digests (see the upload step's rationale).
+          pattern: digests-${{ inputs.image-name }}-*
           merge-multiple: true
 
       - uses: docker/setup-buildx-action@v4
