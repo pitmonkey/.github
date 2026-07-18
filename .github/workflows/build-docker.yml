@@ -7,7 +7,7 @@ on:
         type: string
         default: asus-amd64-dind
       runner-arm64:
-        description: "Runner for native linux/arm64 builds"
+        description: "Runner for native linux/arm64 builds (native-arm64 fallback only)"
         type: string
         default: pi-arm64-dind
       image-name:
@@ -26,6 +26,15 @@ on:
         description: "Multi-platform targets, e.g. 'linux/amd64,linux/arm64'. Empty = native arch only."
         type: string
         default: ""
+      native-arm64:
+        description: >-
+          Multi-arch strategy. false (default) = one buildkit instance on the
+          amd64 runner builds every platform (arm64 via QEMU emulation) and
+          pushes a complete manifest list atomically. true = the legacy per-arch
+          native-runner matrix + merge — use only for a compile-heavy image where
+          emulating arm64 source builds is too slow.
+        type: boolean
+        default: false
       no-cache:
         type: boolean
         default: false
@@ -104,8 +113,86 @@ jobs:
           # layer is left uncached and the next build is slightly slower).
           cache-to: ${{ (!inputs.no-cache && github.event_name != 'pull_request') && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true,compression=zstd,ignore-error=true', github.repository_owner, inputs.image-name) || '' }}
 
+  # Multi-arch DEFAULT path: a single buildkit instance on the amd64 runner builds
+  # every requested platform (arm64 via QEMU emulation) and pushes a complete OCI
+  # manifest list ATOMICALLY in one operation. No push-by-digest, no digest
+  # artifacts, no separate merge job — therefore no ghcr read-after-write
+  # consistency window (the root cause the merge-job retries were band-aiding).
+  # Measured on the dispatcher image: warm 12s / cold 179s vs the native matrix's
+  # ~106s warm. Python images on glibc `*-slim` install prebuilt aarch64 wheels,
+  # so emulation downloads rather than compiles. For a genuinely compile-heavy
+  # image, set `native-arm64: true` to use the legacy per-arch matrix below.
   build-multiplatform:
-    if: inputs.platforms != ''
+    if: inputs.platforms != '' && !inputs.native-arm64
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7.0.0
+
+      - name: Register QEMU binfmt handlers for cross-arch emulation
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: network=host
+
+      - uses: docker/login-action@v4
+        if: inputs.dockerhub-auth
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/login-action@v4
+        # Always log in to ghcr: non-PR events push the image; PR events still
+        # need to pull private/internal base images.
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute sortable image tag
+        id: sortable
+        run: echo "tag=${GITHUB_REF_NAME//\//-}-${GITHUB_SHA:0:7}-$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=short
+            type=raw,value=${{ steps.sortable.outputs.tag }},enable=${{ github.event_name != 'pull_request' }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ inputs.build-context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          # One atomic manifest-list push. On PRs push=false: buildx still builds
+          # every platform (validation) but exports nothing.
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          # Keep the OCI index clean; provenance attestations can be opted in later.
+          provenance: false
+          no-cache: ${{ inputs.no-cache }}
+          # Single shared buildcache tag (one builder covers all arches). Read on
+          # all events; write only on non-PR. ignore-error: a cache-export flake
+          # must not fail a build whose image push already succeeded.
+          cache-from: ${{ !inputs.no-cache && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache', github.repository_owner, inputs.image-name) || '' }}
+          cache-to: ${{ (!inputs.no-cache && github.event_name != 'pull_request') && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true,compression=zstd,ignore-error=true', github.repository_owner, inputs.image-name) || '' }}
+
+  # Multi-arch FALLBACK path (native-arm64: true): the legacy per-arch native
+  # runner matrix. Each arch builds push-by-digest on its own native runner, then
+  # `merge` assembles the manifest list. Retained for any future compile-heavy
+  # image where emulating arm64 source compilation is unacceptably slow. Keeps the
+  # ghcr eventual-consistency hardening (per-arch verify loop + merge retry).
+  build-native-matrix:
+    if: inputs.platforms != '' && inputs.native-arm64
     strategy:
       fail-fast: false
       matrix:
@@ -204,8 +291,8 @@ jobs:
           retention-days: 1
 
   merge:
-    if: inputs.platforms != '' && github.event_name != 'pull_request'
-    needs: build-multiplatform
+    if: inputs.platforms != '' && inputs.native-arm64 && github.event_name != 'pull_request'
+    needs: build-native-matrix
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
     permissions:
