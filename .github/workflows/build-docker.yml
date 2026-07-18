@@ -155,6 +155,26 @@ jobs:
           digest="${{ steps.push.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
 
+      # Push-by-digest can report success while the manifest is not yet resolvable
+      # in ghcr (registry eventual-consistency, especially under load on self-hosted
+      # runners). The merge job then fails with "@sha256:...: not found". Block here
+      # until the just-pushed digest actually resolves, so a genuine push miss fails
+      # this (retryable) build job instead of silently poisoning merge.
+      - name: Verify pushed digest is resolvable in ghcr
+        if: github.event_name != 'pull_request'
+        run: |
+          ref="ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}@${{ steps.push.outputs.digest }}"
+          for i in $(seq 1 6); do
+            if docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
+              echo "verified $ref"
+              exit 0
+            fi
+            echo "attempt $i: $ref not resolvable yet, retrying in 10s"
+            sleep 10
+          done
+          echo "::error::pushed digest $ref never became resolvable in ghcr"
+          exit 1
+
       - if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
@@ -171,7 +191,9 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/download-artifact@v8
+      # Pin to the same major as the upload step (v7); a v7-upload / v8-download
+      # mismatch surfaced as `digest-mismatch: error` on the artifact download.
+      - uses: actions/download-artifact@v7
         with:
           path: /tmp/digests
           pattern: digests-*
@@ -202,7 +224,18 @@ jobs:
 
       - name: Create and push manifest
         working-directory: /tmp/digests
+        # Retry to absorb any residual ghcr consistency lag between the per-arch
+        # pushes (verified in each build job) and this manifest assembly.
         run: |
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf 'ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}@sha256:%s ' *)
+          tags=$(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          sources=$(printf 'ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}@sha256:%s ' *)
+          for i in $(seq 1 5); do
+            if docker buildx imagetools create $tags $sources; then
+              echo "manifest created"
+              exit 0
+            fi
+            echo "attempt $i to create manifest failed, retrying in 15s"
+            sleep 15
+          done
+          echo "::error::failed to create manifest after retries"
+          exit 1
