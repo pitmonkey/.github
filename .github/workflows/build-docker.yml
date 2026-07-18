@@ -34,10 +34,18 @@ on:
         type: boolean
         default: false
 
+# Cancel superseded runs per ref: a rapid push sequence otherwise piles builds
+# onto the limited self-hosted runners, and that load amplifies the ghcr
+# read-after-write consistency lag the merge job is sensitive to.
+concurrency:
+  group: build-docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     if: inputs.platforms == ''
     runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -91,7 +99,10 @@ jobs:
           # so exporting a fresh mode=max cache there just burns wall-clock (it
           # dominated the old ~28min PR builds).
           cache-from: ${{ !inputs.no-cache && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache', github.repository_owner, inputs.image-name) || '' }}
-          cache-to: ${{ (!inputs.no-cache && github.event_name != 'pull_request') && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true,compression=zstd', github.repository_owner, inputs.image-name) || '' }}
+          # ignore-error: a transient ghcr write on cache export must not fail
+          # the whole step when the image push itself succeeded (worst case: a
+          # layer is left uncached and the next build is slightly slower).
+          cache-to: ${{ (!inputs.no-cache && github.event_name != 'pull_request') && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true,compression=zstd,ignore-error=true', github.repository_owner, inputs.image-name) || '' }}
 
   build-multiplatform:
     if: inputs.platforms != ''
@@ -104,6 +115,7 @@ jobs:
           - platform: linux/arm64
             runner: ${{ inputs.runner-arm64 }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -147,7 +159,9 @@ jobs:
           # Per-platform registry cache tag. Read on all events (incl. PRs);
           # write only on non-PR events (see single-arch build job for rationale).
           cache-from: ${{ !inputs.no-cache && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache-{2}', github.repository_owner, inputs.image-name, env.PLATFORM_PAIR) || '' }}
-          cache-to: ${{ (!inputs.no-cache && github.event_name != 'pull_request') && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache-{2},mode=max,image-manifest=true,oci-mediatypes=true,compression=zstd', github.repository_owner, inputs.image-name, env.PLATFORM_PAIR) || '' }}
+          # ignore-error: see single-arch build job — cache-export flakes must
+          # not fail a build whose image push already succeeded.
+          cache-to: ${{ (!inputs.no-cache && github.event_name != 'pull_request') && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache-{2},mode=max,image-manifest=true,oci-mediatypes=true,compression=zstd,ignore-error=true', github.repository_owner, inputs.image-name, env.PLATFORM_PAIR) || '' }}
 
       - if: github.event_name != 'pull_request'
         run: |
@@ -193,6 +207,7 @@ jobs:
     if: inputs.platforms != '' && github.event_name != 'pull_request'
     needs: build-multiplatform
     runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
