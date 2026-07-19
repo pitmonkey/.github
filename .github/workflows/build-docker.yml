@@ -47,7 +47,7 @@ on:
 # onto the limited self-hosted runners, and that load amplifies the ghcr
 # read-after-write consistency lag the merge job is sensitive to.
 concurrency:
-  group: build-docker-${{ github.workflow }}-${{ github.ref }}
+  group: build-docker-${{ github.workflow }}-${{ inputs.image-name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
