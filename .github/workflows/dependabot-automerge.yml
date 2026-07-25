@@ -1,0 +1,35 @@
+name: Reusable - Dependabot auto-merge
+
+# Enables GitHub's native auto-merge on Dependabot pull requests that only touch
+# dev tooling. `--auto` holds the merge until the branch's required status checks
+# pass, which across this org is the single `ci-green` context. Runtime/production
+# dependencies do not match the filter and fall through untouched.
+#
+# SECURITY: callers invoke this from `pull_request_target`, which runs with write
+# permissions against the base repo. This workflow must never check out or execute
+# pull request code. Do not add a checkout step.
+
+on:
+  workflow_call:
+
+jobs:
+  dev-tooling-automerge:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+
+      # dependency-type resolves to the most-privileged type in the pull request,
+      # so a grouped PR only reads as development when every member is a dev dep.
+      # Dependabot has no dev/prod concept for pre-commit or github-actions and
+      # reports both as direct:production, hence the explicit ecosystem clauses.
+      - name: Enable auto-merge for dev-tooling updates
+        if: >-
+          steps.meta.outputs.dependency-type == 'direct:development' ||
+          steps.meta.outputs.package-ecosystem == 'pre_commit' ||
+          steps.meta.outputs.package-ecosystem == 'github_actions'
+        run: gh pr merge --auto --squash "${{ github.event.pull_request.html_url }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -6,11 +6,13 @@ This repo is the single source of truth for all GitHub Actions workflows used ac
 
 ```
 .github/workflows/
-  test-python.yml           # pytest via uv
-  lint-python.yml           # ruff + mypy via uv
-  build-docker.yml          # Docker build + push to ghcr.io
-  notify-slack.yml          # Slack CI status notification
-  add-issue-to-project.yml  # Add new GitHub issue to org project board
+  test-python.yml              # pytest via uv
+  lint-python.yml              # ruff + mypy via uv
+  build-docker.yml             # Docker build + push to ghcr.io
+  build-claude-worker-base.yml # Build + push the shared claude-worker-base image
+  notify-slack.yml             # Slack CI status notification
+  add-issue-to-project.yml     # Add new GitHub issue to org project board
+  dependabot-automerge.yml     # Auto-merge Dependabot dev-tooling PRs on green
 ```
 
 ## How consuming repos use these
@@ -32,6 +34,13 @@ All callers use `secrets: inherit` — no secret forwarding needed in the caller
 - Keep jobs to one concern per file (test, lint, build, notify are separate)
 - Document every input in README.md when adding or changing one
 - The standard runners are `pi-arm64` (test/lint/notify and arm64 Docker builds) and `asus-amd64-dind` (amd64 Docker builds)
+
+## Org CI conventions
+
+- Every consuming repo exposes a job named exactly **`ci-green`** that `needs:` all of its test/lint/build jobs, runs `if: always()`, and fails only on `failure`/`cancelled`. It is the single required status check across the org, supplied by the org ruleset `ci-green-required`. Job names differ per repo and a skipped path-filtered job emits no check run, so individual job names can never be required directly.
+- Dependabot pull requests skip Docker builds automatically — the guard lives in `build-docker.yml`, not in callers.
+- Dependabot dev-tooling updates auto-merge on green via `dependabot-automerge.yml`. This only works when the repo's `dependabot.yml` splits `uv` into `uv-dev`/`uv-prod` groups; a mixed group reports as `direct:production` and never qualifies.
+- Never add a `pre-commit` Dependabot ecosystem to a repo with no `.pre-commit-config.yaml` — Dependabot errors on it.
 
 ## Org setup required
 
