@@ -51,8 +51,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # A Dependabot pull request never pushes an image (push is already false on
+  # pull_request events), so building one only burns time on the self-hosted
+  # runners. Key on pull_request.user.login rather than github.actor: on a manual
+  # re-run github.actor becomes whoever clicked re-run, which would silently
+  # re-enable the build.
   build:
-    if: inputs.platforms == ''
+    if: >-
+      inputs.platforms == ''
+      && !(github.event_name == 'pull_request'
+      && github.event.pull_request.user.login == 'dependabot[bot]')
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
     permissions:
@@ -123,7 +131,11 @@ jobs:
   # so emulation downloads rather than compiles. For a genuinely compile-heavy
   # image, set `native-arm64: true` to use the legacy per-arch matrix below.
   build-multiplatform:
-    if: inputs.platforms != '' && !inputs.native-arm64
+    # Dependabot guard: see the `build` job.
+    if: >-
+      inputs.platforms != '' && !inputs.native-arm64
+      && !(github.event_name == 'pull_request'
+      && github.event.pull_request.user.login == 'dependabot[bot]')
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 45
     permissions:
@@ -192,7 +204,11 @@ jobs:
   # image where emulating arm64 source compilation is unacceptably slow. Keeps the
   # ghcr eventual-consistency hardening (per-arch verify loop + merge retry).
   build-native-matrix:
-    if: inputs.platforms != '' && inputs.native-arm64
+    # Dependabot guard: see the `build` job.
+    if: >-
+      inputs.platforms != '' && inputs.native-arm64
+      && !(github.event_name == 'pull_request'
+      && github.event.pull_request.user.login == 'dependabot[bot]')
     strategy:
       fail-fast: false
       matrix:
