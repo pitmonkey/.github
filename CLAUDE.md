@@ -38,7 +38,7 @@ All callers use `secrets: inherit` — no secret forwarding needed in the caller
 ## Org CI conventions
 
 - Every consuming repo exposes a job named exactly **`ci-green`** that `needs:` all of its test/lint/build jobs, runs `if: always()`, and fails only on `failure`/`cancelled`. It is the single required status check across the org, supplied by the org ruleset `ci-green-required`. Job names differ per repo and a skipped path-filtered job emits no check run, so individual job names can never be required directly.
-- Dependabot pull requests skip Docker builds automatically — the guard lives in `build-docker.yml`, not in callers.
+- Dependabot pull requests skip Docker builds automatically — the guard lives in `build-docker.yml`, not in callers. Branches matching `dependabot/docker/*` are the exception and still build, because a base-image bump can only be validated by building it.
 - Dependabot dev-tooling updates auto-merge on green via `dependabot-automerge.yml`. This only works when the repo's `dependabot.yml` splits `uv` into `uv-dev`/`uv-prod` groups; a mixed group reports as `direct:production` and never qualifies.
 - Never add a `pre-commit` Dependabot ecosystem to a repo with no `.pre-commit-config.yaml` — Dependabot errors on it.
 

@@ -69,7 +69,9 @@ jobs:
 
 Image is pushed only on non-PR events. When `platforms` is non-empty, a single buildkit instance on the amd64 runner builds every platform (arm64 via QEMU emulation) and pushes one manifest list atomically; set `native-arm64: true` to fall back to the per-arch native-runner matrix for a compile-heavy image.
 
-**Dependabot pull requests skip the build entirely.** All build jobs carry a guard on `github.event.pull_request.user.login`, so a dependency bump never occupies a self-hosted runner for a build that pushes nothing. Callers do not need their own `github.actor` guard. The calling job reports `skipped`, which `notify-slack.yml` and the `ci-green` gate both treat as passing.
+**Dependabot pull requests skip the build — except Docker bumps.** All build jobs carry a guard on `github.event.pull_request.user.login`, so a `uv`, `pre-commit` or `github-actions` bump never occupies a runner for a build that pushes nothing. Callers do not need their own `github.actor` guard. The calling job reports `skipped`, which `notify-slack.yml` and the `ci-green` gate both treat as passing.
+
+Branches matching `dependabot/docker/*` **do** build. For a library bump the Dockerfile is unchanged and the build proves nothing; for a base-image bump the Dockerfile *is* the change, and building it is the only test that exists. Without the exception such a PR reports a green `ci-green` having never assembled the image — a green tick that did not test the thing being changed.
 
 Build cache is stored as a registry image on GHCR at `ghcr.io/<owner>/<image-name>:buildcache` (multi-platform builds use a per-platform `:buildcache-<platform>` tag to avoid collisions). Cache is **read on all events, including PRs** — a fresh ephemeral runner pulls the remote cache tag to reuse layers, so PR builds skip work already done on the last push. Cache is **written only on non-PR events** — PRs push no image, and on self-hosted runners exporting a fresh `mode=max` cache per PR dominated wall-clock (it was ~25 min of the old ~28 min PR builds). Pass `no-cache: true` to skip cache entirely.
 
