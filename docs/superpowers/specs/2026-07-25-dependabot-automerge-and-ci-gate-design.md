@@ -328,16 +328,22 @@ the design text above is left as written so the changes stay visible.
    skipped and `ci-green` still reported and passed — the exact case that would hang
    forever if individual job names were required.
 
-### Not yet confirmed
+6. **Docker builds skip on Dependabot pull requests, via the central guard.**
+   Confirmed on `nrl-fantasy-analysis#59`, a `docker-all` Dependabot pull request
+   rebased after the guard landed. That repo's caller has **no** `if:` guard on its
+   `build` job, so the caller job ran unconditionally and all four jobs inside
+   `build-docker.yml` — `build`, `build-multiplatform`, `build-native-matrix`,
+   `merge` — reported `skipped`. `ci-green` still passed.
 
-**Docker builds skipping on Dependabot pull requests has not been observed on a fresh
-run.** Every Dependabot pull request that triggers builds predates the guard, and their
-check results are from runs on 2026-07-24. A `@dependabot rebase` was requested on
-`github-dispatcher#103` to force a fresh run; Dependabot had not acted at time of
-writing. The repos where builds *were* seen skipping (`toby-assistant`,
-`nrl-injury-ward`) each carry their own caller-level `github.actor != 'dependabot[bot]'`
-guard, so they do not isolate the central one. Re-check `github-dispatcher#103` or any
-Dependabot pull request raised after 2026-07-25 05:20 UTC.
+   This case matters because it isolates the central guard. `toby-assistant`,
+   `nrl-injury-ward` and `nrlteamlist` also show builds skipping, but each carries its
+   own caller-level `github.actor != 'dependabot[bot]'` condition, so their whole
+   called workflow reports a single `build=SKIPPED` and proves nothing about
+   `build-docker.yml` itself.
+
+   Note that check results on any Dependabot pull request not rebased since
+   2026-07-25 05:20 UTC still show builds succeeding — those runs predate the guard.
+   `github-dispatcher#103` was still in that state at time of writing.
 
 ### Deviations from the design
 
@@ -374,9 +380,12 @@ Dependabot pull request raised after 2026-07-25 05:20 UTC.
 
 ### Follow-up work
 
-- Confirm the Docker build guard on a fresh Dependabot run (see above).
 - Fix `local-claude-marketplace`'s eighteen broken tests, then add it to
   `ci-green-required`.
+- Caller-level `github.actor != 'dependabot[bot]'` guards on `build` jobs are now
+  redundant — `build-docker.yml` handles it, and `github.actor` is the weaker signal
+  since a manual re-run rewrites it. They are harmless, so removing them is optional
+  tidying rather than a fix.
 - Every Dependabot pull request open before 2026-07-25 lacks `ci-green` on its branch
   and will stay blocked until rebased. Dependabot rebases automatically when its base
   moves; `@dependabot rebase` forces it.
