@@ -300,6 +300,90 @@ Evidence required before this is called done:
   a component therefore yields a green gate. This is the same trade-off the existing
   path-filtered CI already makes.
 
+## Verification results (2026-07-25)
+
+Rolled out and verified the same day. Deviations from the design are recorded below;
+the design text above is left as written so the changes stay visible.
+
+### Confirmed
+
+1. **`ci-green` present and reporting in all thirteen repos.** Verified against each
+   merged default branch: `ci-green` job, org auto-merge caller, and `uv-dev` group
+   all present, 13/13.
+2. **Required check live in twelve repos.** Ruleset `ci-green-required` (id
+   `19724552`) created, active, `strict=false`. `gh api repos/pitmonkey/<r>/rules/branches/main`
+   returns context `ci-green` for all twelve; out-of-scope repos (`second-brain`,
+   `research-kb`, `poe2`, `banana-benders-art`, `local-claude-marketplace`) return zero
+   `required_status_checks` rules.
+3. **Dev-tooling auto-merge works end to end.** Four Dependabot pull requests —
+   `nrlfb_social#50`, `nrl-injury-ward#30`, `nrl-injury-ward#26`, `toby-assistant#104`
+   — merged with no human action, all four `mergedBy: app/github-actions`, each after
+   `ci-green` passed. All were `pre_commit` bumps, the ecosystem the drifted workflow
+   in `nrlfantasy_scraper` would have missed.
+4. **Production pull requests correctly excluded.** `github-dispatcher#103`,
+   `nrlfb_social#52`, `calendar-sync#43`, `nrlteamlist#55` (all `uv-prod` or
+   `docker-all`) show `autoMergeRequest: null` and remain open.
+5. **The skipped-passes design holds.** `github-dispatcher`'s rollout pull request
+   changed only `.github/`, matching no path filter, so all seventeen component jobs
+   skipped and `ci-green` still reported and passed — the exact case that would hang
+   forever if individual job names were required.
+
+### Not yet confirmed
+
+**Docker builds skipping on Dependabot pull requests has not been observed on a fresh
+run.** Every Dependabot pull request that triggers builds predates the guard, and their
+check results are from runs on 2026-07-24. A `@dependabot rebase` was requested on
+`github-dispatcher#103` to force a fresh run; Dependabot had not acted at time of
+writing. The repos where builds *were* seen skipping (`toby-assistant`,
+`nrl-injury-ward`) each carry their own caller-level `github.actor != 'dependabot[bot]'`
+guard, so they do not isolate the central one. Re-check `github-dispatcher#103` or any
+Dependabot pull request raised after 2026-07-25 05:20 UTC.
+
+### Deviations from the design
+
+- **Classic branch protection existed on four repos, not two.** `toby-assistant` and
+  `nrlfantasy_scraper` were invisible in the original survey because their default
+  branch was still `master` while the protection API was queried for `main`. All four
+  had `strict: true`, which left every open pull request `BEHIND` and unmergeable once
+  `main` moved — the cause of the "merge without waiting for requirements" prompt.
+  Deleted on all four.
+- **`local-claude-marketplace` is excluded from the ruleset.** It is the org's only
+  public in-scope repo, and three separate pre-existing failures surfaced:
+  1. `pitmonkey/.github` was private, and a public repo cannot call reusable workflows
+     from a private one. GitHub rejected the entire workflow file, so **no CI job had
+     run in that repo on any branch since it was published on 2026-05-18**. Resolved by
+     making `pitmonkey/.github` public.
+  2. The org's `Default` self-hosted runner group sets
+     `allows_public_repositories: false`, so its jobs then queued forever. Resolved by
+     overriding all four reusable workflows to `runner: ubuntu-latest` in that repo.
+     Enabling public repositories on that runner group was rejected: fork pull requests
+     would then execute arbitrary code on the cluster runners, which hold ghcr push
+     credentials.
+  3. Its `notify` job cannot work — org secrets are not exposed to public repos, so
+     `notify-slack.yml`'s required `SLACK_BOT_TOKEN` fails the job before any step.
+     Removed from that repo.
+  Its test suite has eighteen pre-existing failures (`asyncio.get_event_loop()` in
+  fixtures), so `ci-green` is red there. Fixing that and adding the repo to the ruleset
+  is separate work.
+- **`nrlfantasy_scraper` lint debt cleared.** Thirteen `ruff` violations had been
+  failing since 2026-07-24 and would have blocked every pull request in that repo once
+  `ci-green` became required. Fixed in `nrlfantasy_scraper#52`; mypy clean, 321 tests
+  pass.
+- **No repo needed a `pre-commit` ecosystem added.** All seven repos holding a
+  `.pre-commit-config.yaml` already declared it.
+
+### Follow-up work
+
+- Confirm the Docker build guard on a fresh Dependabot run (see above).
+- Fix `local-claude-marketplace`'s eighteen broken tests, then add it to
+  `ci-green-required`.
+- Every Dependabot pull request open before 2026-07-25 lacks `ci-green` on its branch
+  and will stay blocked until rebased. Dependabot rebases automatically when its base
+  moves; `@dependabot rebase` forces it.
+- The three other public repos (`liquid-football-worldcup`, `claude-dev-skills`,
+  `superpowers`) can now use the org reusable workflows, but would hit the same
+  self-hosted runner restriction and need `runner: ubuntu-latest` overrides.
+
 ## Out of scope
 
 - The in-repo dispatcher and worker tiering half of issue #99.
