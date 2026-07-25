@@ -56,11 +56,20 @@ jobs:
   # runners. Key on pull_request.user.login rather than github.actor: on a manual
   # re-run github.actor becomes whoever clicked re-run, which would silently
   # re-enable the build.
+  #
+  # The `dependabot/docker/` exception is the important half. For a uv or
+  # pre-commit bump the Dockerfile is unchanged and the build proves nothing. For
+  # a base-image bump the Dockerfile IS the change, and building it is the only
+  # test that exists — without this, such a PR reports a green ci-green having
+  # never assembled the image. Branch naming is a Dependabot convention rather
+  # than a documented API; if it ever changes, this fails toward skipping the
+  # build, which is the previous behaviour rather than something broken.
   build:
     if: >-
       inputs.platforms == ''
       && !(github.event_name == 'pull_request'
-      && github.event.pull_request.user.login == 'dependabot[bot]')
+      && github.event.pull_request.user.login == 'dependabot[bot]'
+      && !startsWith(github.head_ref, 'dependabot/docker/'))
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
     permissions:
@@ -135,7 +144,8 @@ jobs:
     if: >-
       inputs.platforms != '' && !inputs.native-arm64
       && !(github.event_name == 'pull_request'
-      && github.event.pull_request.user.login == 'dependabot[bot]')
+      && github.event.pull_request.user.login == 'dependabot[bot]'
+      && !startsWith(github.head_ref, 'dependabot/docker/'))
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 45
     permissions:
@@ -208,7 +218,8 @@ jobs:
     if: >-
       inputs.platforms != '' && inputs.native-arm64
       && !(github.event_name == 'pull_request'
-      && github.event.pull_request.user.login == 'dependabot[bot]')
+      && github.event.pull_request.user.login == 'dependabot[bot]'
+      && !startsWith(github.head_ref, 'dependabot/docker/'))
     strategy:
       fail-fast: false
       matrix:
