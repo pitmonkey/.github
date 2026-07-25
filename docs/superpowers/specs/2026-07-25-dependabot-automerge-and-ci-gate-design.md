@@ -142,8 +142,15 @@ unconditional, so it always produces a check run.
 Including `build-*` jobs is correct: on a Dependabot pull request they are skipped and
 the gate passes; on a normal pull request a genuine build failure blocks the merge.
 
-The org ruleset `global-main-protection` then gains one `required_status_checks` rule
-with the single context `ci-green`, `strict_required_status_checks_policy: false`.
+A **new** org ruleset, `ci-green-required`, then carries one `required_status_checks`
+rule with the single context `ci-green` and
+`strict_required_status_checks_policy: false`. It targets only the thirteen in-scope
+repos by name.
+
+It must be a separate ruleset: `global-main-protection` applies to all 43 repos in the
+org, and roughly thirty of them have no `ci-green` job. Adding the requirement there
+would leave every pull request in those repos permanently blocked on a check that
+never reports.
 Strict is off deliberately — requiring the branch to be current forces Dependabot to
 rebase every open pull request on each merge, which is exactly the churn this work is
 meant to remove. It can be enabled later if merge-order safety becomes a concern.
@@ -222,7 +229,12 @@ Every in-scope repo's `.github/dependabot.yml` is normalised to:
 
 - a `uv` ecosystem with `uv-dev` (`dependency-type: development`) and `uv-prod`
   (`dependency-type: production`) groups,
-- a `pre-commit` ecosystem with a single `pre-commit-all` group,
+- a `pre-commit` ecosystem with a single `pre-commit-all` group, **only in repos that
+  actually contain a `.pre-commit-config.yaml`** — Dependabot errors on the ecosystem
+  otherwise. Seven repos have the file (`nrlfb_social`, `toby-assistant`,
+  `nrl-injury-ward`, `kubs-log-analysis`, `calendar-sync`, `local-claude-marketplace`,
+  `nrl-fantasy-analysis`) and all seven already declare the ecosystem, so no repo
+  needs one added,
 - a `github-actions` ecosystem with a single `actions-all` group,
 - a `docker` ecosystem with a single `docker-all` group,
 - `schedule: weekly` on Monday, `cooldown.default-days: 7`.
@@ -256,9 +268,9 @@ would block every open pull request in the repos that lack it.
   replace any local `dependabot-automerge.yml` with the thin caller, normalise
   `dependabot.yml`, and for the renamed seven switch the push filter to `main`.
   All thirteen must be merged before phase 4.
-- **Phase 4** — add the `required_status_checks` rule (`ci-green`, non-strict) to the
-  org ruleset; delete classic branch protection on `nrlfb_social` and
-  `nrl-injury-ward`.
+- **Phase 4** — create the `ci-green-required` org ruleset (context `ci-green`,
+  non-strict, targeting the thirteen repos by name); delete classic branch protection
+  on `nrlfb_social` and `nrl-injury-ward`.
 - **Phase 5** — verification, below.
 
 ## Verification
