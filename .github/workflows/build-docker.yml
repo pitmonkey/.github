@@ -77,7 +77,7 @@ jobs:
       packages: write
       actions: write
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
 
       - uses: docker/setup-buildx-action@v4
         with:
@@ -152,7 +152,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
 
       - name: Register QEMU binfmt handlers for cross-arch emulation
         uses: docker/setup-qemu-action@v4
@@ -235,7 +235,7 @@ jobs:
       packages: write
       actions: write
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
 
       - name: Set platform slug
         run: |

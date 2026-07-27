@@ -19,7 +19,7 @@ jobs:
     steps:
       - name: Fetch Dependabot metadata
         id: meta
-        uses: dependabot/fetch-metadata@v2
+        uses: dependabot/fetch-metadata@v3
 
       # dependency-type resolves to the most-privileged type in the pull request,
       # so a grouped PR only reads as development when every member is a dev dep.
