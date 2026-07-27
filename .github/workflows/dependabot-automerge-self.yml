@@ -1,0 +1,19 @@
+name: dependabot-automerge
+
+# Thin caller for this repo's own Dependabot pull requests. Every other repo in the
+# org calls the reusable workflow by its `pitmonkey/.github@main` path; here it lives
+# alongside, so it is referenced locally. All logic stays in the reusable workflow so
+# it cannot drift.
+#
+# Permissions must be granted here: a reusable workflow's permissions are capped by
+# the caller's grant.
+
+on: pull_request_target
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    uses: ./.github/workflows/dependabot-automerge.yml
