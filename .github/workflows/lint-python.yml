@@ -31,8 +31,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: astral-sh/setup-uv@v9.0.0
+      # Private git dependencies (uv `[tool.uv.sources] … { git = "https://github.com/…" }`)
+      # need a credential: uv shells out to plain `git`, which has none in CI and dies with
+      # `fatal: could not read Username for 'https://github.com'`.
+      #
+      # Injected via GIT_CONFIG_* env, NOT `git config --global`: these runners are
+      # self-hosted, so a global write would persist the token on the runner's disk for
+      # every later job. Env scope dies with the step.
+      #
+      # GIT_CONFIG_COUNT is 0 when OPS_UI_TOKEN is absent, so git ignores KEY_0/VALUE_0
+      # entirely. Without that guard an empty secret would rewrite every github.com clone
+      # to `x-access-token:@github.com` and break PUBLIC dependency fetches for every
+      # repo that calls this workflow.
       - run: uv sync ${{ inputs.uv-sync-args }}
         working-directory: ${{ inputs.working-directory }}
+        env:
+          GIT_CONFIG_COUNT: ${{ secrets.OPS_UI_TOKEN != '' && 1 || 0 }}
+          GIT_CONFIG_KEY_0: "url.https://x-access-token:${{ secrets.OPS_UI_TOKEN }}@github.com/.insteadOf"
+          GIT_CONFIG_VALUE_0: "https://github.com/"
       - run: uv run ruff check ${{ inputs.lint-path }}
         working-directory: ${{ inputs.working-directory }}
       - if: ${{ inputs.run-mypy }}
