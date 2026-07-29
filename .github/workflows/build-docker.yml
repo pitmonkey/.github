@@ -117,6 +117,16 @@ jobs:
           file: ${{ inputs.dockerfile }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
+          # Private git dependencies (uv `[tool.uv.sources] { git = ... }`): uv shells
+          # out to plain `git` INSIDE the build, which has no credential and dies with
+          # `fatal: could not read Username for 'https://github.com'`. Passed as a
+          # BuildKit secret so it mounts only into the RUN that needs it and never
+          # lands in an image layer (unlike a build-arg, which is baked into history).
+          #
+          # Inert where unused: a Dockerfile that never mounts `ops_ui_token` ignores
+          # it, and a caller without the secret passes an empty value.
+          secrets: |
+            ops_ui_token=${{ secrets.OPS_UI_TOKEN }}
           no-cache: ${{ inputs.no-cache }}
           # Registry cache colocated on ghcr (self-hosted runners have no local
           # layer cache and no LAN registry). READ cache on all events — a fresh
@@ -195,6 +205,10 @@ jobs:
           context: ${{ inputs.build-context }}
           file: ${{ inputs.dockerfile }}
           platforms: ${{ inputs.platforms }}
+          # See the single-arch build job: BuildKit secret for private git deps,
+          # inert for Dockerfiles that never mount it.
+          secrets: |
+            ops_ui_token=${{ secrets.OPS_UI_TOKEN }}
           # One atomic manifest-list push. On PRs push=false: buildx still builds
           # every platform (validation) but exports nothing.
           push: ${{ github.event_name != 'pull_request' }}
@@ -267,6 +281,10 @@ jobs:
           context: ${{ inputs.build-context }}
           file: ${{ inputs.dockerfile }}
           platforms: ${{ matrix.platform }}
+          # See the single-arch build job: BuildKit secret for private git deps,
+          # inert for Dockerfiles that never mount it.
+          secrets: |
+            ops_ui_token=${{ secrets.OPS_UI_TOKEN }}
           push: ${{ github.event_name != 'pull_request' }}
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }},push-by-digest=true,name-canonical=true
           no-cache: ${{ inputs.no-cache }}
