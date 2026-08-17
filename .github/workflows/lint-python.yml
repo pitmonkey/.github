@@ -30,7 +30,7 @@ jobs:
     runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@v10.0.1
       # Private git dependencies (uv `[tool.uv.sources] … { git = "https://github.com/…" }`)
       # need a credential: uv shells out to plain `git`, which has none in CI and dies with
       # `fatal: could not read Username for 'https://github.com'`.
