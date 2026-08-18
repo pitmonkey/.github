@@ -20,6 +20,11 @@ jobs:
       - name: Fetch Dependabot metadata
         id: meta
         uses: dependabot/fetch-metadata@v3
+        # Grouped PRs can omit the YAML closing marker (…), causing fetch-metadata
+        # to fail with "PR does not contain metadata". That is not a real error —
+        # empty outputs simply mean the auto-merge condition below evaluates false
+        # and the step that enables auto-merge is skipped. Always exit green.
+        continue-on-error: true
 
       # dependency-type resolves to the most-privileged type in the pull request,
       # so a grouped PR only reads as development when every member is a dev dep.
