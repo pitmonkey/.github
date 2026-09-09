@@ -43,6 +43,11 @@ jobs:
       # entirely. Without that guard an empty secret would rewrite every github.com clone
       # to `x-access-token:@github.com` and break PUBLIC dependency fetches for every
       # repo that calls this workflow.
+      #
+      # OPS_UI_TOKEN lives in TWO org secret scopes, Actions and Dependabot, which GitHub
+      # does not sync. A Dependabot-triggered run reads ONLY the Dependabot copy, so a
+      # rotation that updates only Actions leaves push CI green and fails every Dependabot
+      # PR with GIT_CONFIG_COUNT: 0. Rotation: README.md, "Rotating OPS_UI_TOKEN".
       - run: uv sync ${{ inputs.uv-sync-args }}
         working-directory: ${{ inputs.working-directory }}
         env:

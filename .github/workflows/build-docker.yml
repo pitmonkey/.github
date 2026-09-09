@@ -125,6 +125,11 @@ jobs:
           #
           # Inert where unused: a Dockerfile that never mounts `ops_ui_token` ignores
           # it, and a caller without the secret passes an empty value.
+          #
+          # OPS_UI_TOKEN lives in TWO org secret scopes, Actions and Dependabot, which
+          # GitHub does not sync. `dependabot/docker/*` branches DO build here, and such a
+          # run reads ONLY the Dependabot copy. Rotation: README.md, "Rotating
+          # OPS_UI_TOKEN".
           secrets: |
             ops_ui_token=${{ secrets.OPS_UI_TOKEN }}
           no-cache: ${{ inputs.no-cache }}

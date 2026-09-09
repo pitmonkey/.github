@@ -41,6 +41,7 @@ All callers use `secrets: inherit` — no secret forwarding needed in the caller
 - Dependabot pull requests skip Docker builds automatically — the guard lives in `build-docker.yml`, not in callers. Branches matching `dependabot/docker/*` are the exception and still build, because a base-image bump can only be validated by building it.
 - Dependabot dev-tooling updates auto-merge on green via `dependabot-automerge.yml`. This only works when the repo's `dependabot.yml` splits `uv` into `uv-dev`/`uv-prod` groups; a mixed group reports as `direct:production` and never qualifies.
 - Never add a `pre-commit` Dependabot ecosystem to a repo with no `.pre-commit-config.yaml` — Dependabot errors on it.
+- `OPS_UI_TOKEN` is held in two org secret scopes, Actions and Dependabot, which GitHub does not sync. A Dependabot-triggered run reads only the Dependabot copy, so rotating the PAT and updating only Actions breaks every Dependabot PR while push CI stays green. Rotation procedure and the diagnosis table: "Rotating `OPS_UI_TOKEN`" in README.md.
 
 ## Org setup required
 
@@ -51,6 +52,7 @@ All callers use `secrets: inherit` — no secret forwarding needed in the caller
 | `PROJECT_PAT` | Classic PAT with `project` scope for org project board |
 | `DOCKERHUB_USERNAME` | Docker Hub login — avoids pull rate limits (optional, used when `dockerhub-auth: true`) |
 | `DOCKERHUB_TOKEN` | Docker Hub access token (pair with `DOCKERHUB_USERNAME`) |
+| `OPS_UI_TOKEN` | Fine-grained PAT, `Contents: Read` on private repos used as uv git dependencies (today `pitmonkey/ops-ui`). Set in **both** the Actions and Dependabot scopes — see "Rotating `OPS_UI_TOKEN`" in README.md |
 
 | Variable | Purpose |
 |---|---|
