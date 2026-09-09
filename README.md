@@ -20,6 +20,8 @@ jobs:
 | `uv-sync-args` | `""` | Extra args to `uv sync` (e.g. `--extra dev`) |
 | `test-path` | `tests/` | Path passed to pytest |
 
+**Required org secrets:** `OPS_UI_TOKEN` — only when the package has a private git dependency (`[tool.uv.sources] { git = ... }`). Absent is fine: the injection is guarded and public dependencies still resolve. See [Rotating `OPS_UI_TOKEN`](#rotating-ops_ui_token).
+
 ---
 
 ### `lint-python.yml` — Run ruff + mypy
@@ -41,6 +43,8 @@ jobs:
 | `lint-path` | `"."` | Path for `ruff check` (and `mypy`, unless `mypy-path` is set) |
 | `mypy-path` | `""` | Separate path for `mypy` (e.g. the package dir, so `ruff` lints tests while `mypy` stays scoped). Empty = use `lint-path` |
 | `run-mypy` | `true` | Whether to run mypy |
+
+**Required org secrets:** `OPS_UI_TOKEN` — same as `test-python.yml` above. See [Rotating `OPS_UI_TOKEN`](#rotating-ops_ui_token).
 
 ---
 
@@ -75,7 +79,7 @@ Branches matching `dependabot/docker/*` **do** build. For a library bump the Doc
 
 Build cache is stored as a registry image on GHCR at `ghcr.io/<owner>/<image-name>:buildcache` (multi-platform builds use a per-platform `:buildcache-<platform>` tag to avoid collisions). Cache is **read on all events, including PRs** — a fresh ephemeral runner pulls the remote cache tag to reuse layers, so PR builds skip work already done on the last push. Cache is **written only on non-PR events** — PRs push no image, and on self-hosted runners exporting a fresh `mode=max` cache per PR dominated wall-clock (it was ~25 min of the old ~28 min PR builds). Pass `no-cache: true` to skip cache entirely.
 
-**Required org secrets:** none (uses auto-provided `GITHUB_TOKEN`). For Docker Hub auth: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`.
+**Required org secrets:** none for the push itself (uses the auto-provided `GITHUB_TOKEN`). For Docker Hub auth: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`. `OPS_UI_TOKEN` is forwarded as the BuildKit secret `ops_ui_token` for images with a private git dependency, and is inert for Dockerfiles that never mount it — see [Rotating `OPS_UI_TOKEN`](#rotating-ops_ui_token).
 
 **Required caller permissions:** the calling job must declare `permissions: { contents: read, packages: write, actions: write }` — reusable workflows cannot elevate beyond what the caller grants. `packages: write` covers both the image push and the registry build cache; `actions: write` is used by the multi-platform digest artifact upload.
 
@@ -263,13 +267,44 @@ Every repo must expose a job named exactly `ci-green`, listing all of its test/l
 
 ## Org Setup (one-time)
 
-### Org secrets (Settings → Secrets → Actions)
+### Org secrets (Settings → Secrets and variables)
+
+All but `OPS_UI_TOKEN` live only under **Actions**. `OPS_UI_TOKEN` must be set under **Actions** *and* **Dependabot** — see below.
 
 | Secret | Purpose |
 |---|---|
 | `SLACK_BOT_TOKEN` | Slack bot auth for CI notifications |
 | `SLACK_CHANNEL_ID` | Slack channel for CI notifications |
 | `PROJECT_PAT` | Classic PAT with `project` scope for org project board |
+| `OPS_UI_TOKEN` | Fine-grained PAT, `Contents: Read` on the private repos used as git dependencies (today `pitmonkey/ops-ui`). **Must be set in the Actions *and* Dependabot scopes** — see below |
+
+### Rotating `OPS_UI_TOKEN`
+
+This secret exists **twice** — once in the Actions scope, once in the Dependabot scope — and GitHub does not sync them. A workflow run triggered by a Dependabot pull request reads **only** the Dependabot scope, so updating just the Actions copy leaves push CI green while every Dependabot PR fails. That is what happened on 2026-09-04: the rotation refreshed only the Actions copy, and it surfaced three days later as a `uv-prod` bump PR stuck on a red `ci-green`.
+
+Set both copies, feeding the value on **stdin**. `gh secret set` reads stdin when `--body` is absent, and an empty stdin in a non-interactive shell silently overwrites the secret with an empty string rather than failing:
+
+```bash
+tr -d '\r\n' < /path/to/pat | gh secret set OPS_UI_TOKEN --org pitmonkey --app dependabot --visibility all
+tr -d '\r\n' < /path/to/pat | gh secret set OPS_UI_TOKEN --org pitmonkey --app actions    --visibility all
+```
+
+Piping keeps the value out of `argv` and out of shell history, and `tr` strips the trailing newline that would otherwise become part of the secret.
+
+Verify **both** scopes — a push-triggered rerun does not exercise the Dependabot copy, and vice versa. Rerun a Dependabot PR's failed jobs and a push-triggered run on the default branch, then read `GIT_CONFIG_COUNT` in the `uv sync` step's log:
+
+| Job log | Meaning |
+|---|---|
+| `GIT_CONFIG_COUNT: 1` | credential injected — this scope is good |
+| `GIT_CONFIG_COUNT: 0` + `fatal: could not read Username for 'https://github.com'` | secret **empty or absent** in the scope this run reads |
+| `GIT_CONFIG_COUNT: 1` + `remote: Invalid username or token` | secret **present but stale** — the value no longer matches a live PAT |
+
+Two things that mislead while debugging this:
+
+- GitHub's **"Last used"** on the token's own settings page does not reliably register git-over-HTTPS use. A token driving CI daily can read "Never used"; do not use that field to work out which token is live.
+- A PAT value is shown **once**, at creation. If it was not saved, the Actions copy cannot be mirrored into the Dependabot copy — use **Regenerate** on the existing token (it keeps the name, permissions and repository selection) and then set both copies.
+
+The org does not require approval for fine-grained PATs, so a newly minted or regenerated token works immediately.
 
 ### Org variable
 
