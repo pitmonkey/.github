@@ -1,0 +1,134 @@
+name: Reusable - Build Rust
+
+# Builds one release binary for one target, runs a smoke test on it and uploads
+# it as an artifact. Call it once per target (a matrix in the caller).
+#
+# Windows (x86_64-pc-windows-gnu) is cross-compiled with mingw-w64 and smoke-tested
+# under Wine, so no GitHub-hosted Windows minutes are spent. A glibc-versioned
+# target (x86_64-unknown-linux-gnu.2.17) needs `zigbuild: true`.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: asus-amd64-wine
+      working-directory:
+        type: string
+        default: "."
+      toolchain:
+        type: string
+        default: stable
+      package:
+        description: "Cargo package to build (`-p`)."
+        type: string
+        required: true
+      binary:
+        description: "Binary name, without .exe. Default = package."
+        type: string
+        default: ""
+      target:
+        description: >-
+          Rust target triple. With zigbuild, a glibc version may be appended
+          (x86_64-unknown-linux-gnu.2.17).
+        type: string
+        default: x86_64-unknown-linux-gnu
+      cargo-args:
+        description: "Further cargo build arguments (features)."
+        type: string
+        default: ""
+      rustflags:
+        description: "RUSTFLAGS for the build (for example `-C target-feature=+crt-static`)."
+        type: string
+        default: ""
+      zigbuild:
+        description: "Build with cargo-zigbuild (links against an older glibc)."
+        type: boolean
+        default: false
+      smoke-test:
+        description: >-
+          Shell commands run after the build, with $BIN set to the binary's path
+          and $WINE to the Wine binary (for Windows targets). Empty = none.
+        type: string
+        default: ""
+      artifact-name:
+        description: "Artifact name. Empty = no upload."
+        type: string
+        default: ""
+      wine:
+        type: string
+        default: wine64
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Resolve target and binary path
+        id: paths
+        env:
+          TARGET: ${{ inputs.target }}
+          BINARY: ${{ inputs.binary || inputs.package }}
+        run: |
+          set -euo pipefail
+          # zigbuild's glibc suffix is not part of the rustup target or the output directory.
+          triple="${TARGET%.[0-9]*.[0-9]*}"
+          exe=""
+          case "$triple" in *windows*) exe=".exe" ;; esac
+          echo "triple=$triple" >> "$GITHUB_OUTPUT"
+          echo "bin=target/$triple/release/$BINARY$exe" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ inputs.toolchain }}
+          targets: ${{ steps.paths.outputs.triple }}
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: ${{ inputs.working-directory }}
+          key: ${{ inputs.target }}
+
+      - name: Install cargo-zigbuild
+        if: inputs.zigbuild
+        run: |
+          set -euo pipefail
+          # --user keeps it out of the image's system Python; cargo-zigbuild falls
+          # back to `python3 -m ziglang` when no `zig` is on PATH.
+          python3 -m pip install --user --break-system-packages ziglang
+          cargo install cargo-zigbuild --locked
+
+      - name: Build
+        env:
+          RUSTFLAGS: ${{ inputs.rustflags }}
+          TARGET: ${{ inputs.target }}
+          PACKAGE: ${{ inputs.package }}
+          CARGO_ARGS: ${{ inputs.cargo-args }}
+          BUILD: ${{ inputs.zigbuild && 'zigbuild' || 'build' }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2086 # CARGO_ARGS is a list of arguments
+          cargo "$BUILD" --release -p "$PACKAGE" --target "$TARGET" $CARGO_ARGS
+
+      - name: Smoke test
+        if: inputs.smoke-test != ''
+        env:
+          BIN: ${{ steps.paths.outputs.bin }}
+          WINE: ${{ inputs.wine }}
+          WINEDEBUG: -all
+          SMOKE_TEST: ${{ inputs.smoke-test }}
+        run: bash -euo pipefail -c "$SMOKE_TEST"
+
+      - uses: actions/upload-artifact@v7.0.1
+        if: inputs.artifact-name != ''
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ inputs.working-directory }}/${{ steps.paths.outputs.bin }}
+          if-no-files-found: error
