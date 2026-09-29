@@ -8,6 +8,8 @@ This repo is the single source of truth for all GitHub Actions workflows used ac
 .github/workflows/
   test-python.yml              # pytest via uv
   lint-python.yml              # ruff + mypy via uv
+  test-rust.yml                # rustfmt + clippy + cargo test, optionally Windows under Wine
+  build-rust.yml               # release binary for one target (Linux, musl, Windows via mingw)
   build-docker.yml             # Docker build + push to ghcr.io
   build-claude-worker-base.yml # Build + push the shared claude-worker-base image
   notify-slack.yml             # Slack CI status notification
@@ -33,7 +35,7 @@ All callers use `secrets: inherit` — no secret forwarding needed in the caller
 - All inputs must have sensible defaults so callers only specify overrides
 - Keep jobs to one concern per file (test, lint, build, notify are separate)
 - Document every input in README.md when adding or changing one
-- The standard runners are `pi-arm64` (test/lint/notify and arm64 Docker builds) and `asus-amd64-dind` (amd64 Docker builds)
+- The standard runners are `pi-arm64` (test/lint/notify and arm64 Docker builds), `asus-amd64-dind` (amd64 Docker builds) and `asus-amd64-wine` (Rust test and build jobs, Windows under Wine; no DinD)
 
 ## Org CI conventions
 

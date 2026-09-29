@@ -1,0 +1,125 @@
+name: Reusable - Test Rust
+
+# rustfmt, clippy (warnings are errors) and cargo test for a Cargo workspace,
+# and optionally the same tests cross-compiled for Windows and run under Wine.
+#
+# The default runner, asus-amd64-wine, is the ARC scale set built for this: no
+# DinD, a work volume sized for Rust's target/ directory, and mingw-w64, Wine and
+# Xvfb in its image. asus-amd64-dind's 4Gi work volume is too small for a Rust
+# workspace of any size (docs/arc-runners.md in k3s-infra).
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: asus-amd64-wine
+      working-directory:
+        description: "Directory holding the Cargo workspace. Default = repo root."
+        type: string
+        default: "."
+      toolchain:
+        type: string
+        default: stable
+      cargo-args:
+        description: "Package and feature selection passed to both clippy and test."
+        type: string
+        default: --workspace
+      extra-cargo-args:
+        description: >-
+          Further argument sets, one per line, each checked with clippy and tested
+          like cargo-args (for example `-p app --no-default-features` for a
+          headless build).
+        type: string
+        default: ""
+      windows:
+        description: >-
+          Also cross-compile clippy and the tests for x86_64-pc-windows-gnu and run
+          the tests under Wine, on the same runner.
+        type: boolean
+        default: false
+      wine:
+        description: "Wine binary that runs the Windows test executables."
+        type: string
+        default: wine64
+
+# Debug info and incremental compilation are what make target/ large (a 19 GB
+# debug target/ drops to about 2 GB without them); neither helps a one-off CI build.
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+
+jobs:
+  linux:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ inputs.toolchain }}
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: ${{ inputs.working-directory }}
+      - run: cargo fmt --all --check
+      - name: clippy and test, for each argument set
+        env:
+          ARG_SETS: |
+            ${{ inputs.cargo-args }}
+            ${{ inputs.extra-cargo-args }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r args; do
+            [ -z "${args// }" ] && continue
+            echo "::group::cargo clippy $args"
+            # shellcheck disable=SC2086 # each line is a list of arguments
+            cargo clippy $args --all-targets -- -D warnings
+            echo "::endgroup::"
+            # shellcheck disable=SC2086
+            cargo test $args --no-fail-fast
+          done <<< "$ARG_SETS"
+
+  windows:
+    if: inputs.windows
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ inputs.toolchain }}
+          components: clippy
+          targets: x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: ${{ inputs.working-directory }}
+          key: windows-gnu
+      - name: clippy and test under Wine, for each argument set
+        env:
+          ARG_SETS: |
+            ${{ inputs.cargo-args }}
+            ${{ inputs.extra-cargo-args }}
+          # cargo runs each Windows test executable through Wine.
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER: ${{ inputs.wine }}
+          WINEDEBUG: -all
+        run: |
+          set -euo pipefail
+          "$CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER" --version
+          while IFS= read -r args; do
+            [ -z "${args// }" ] && continue
+            echo "::group::cargo clippy $args (Windows)"
+            # shellcheck disable=SC2086 # each line is a list of arguments
+            cargo clippy $args --all-targets --target x86_64-pc-windows-gnu -- -D warnings
+            echo "::endgroup::"
+            # shellcheck disable=SC2086
+            cargo test $args --no-fail-fast --target x86_64-pc-windows-gnu
+          done <<< "$ARG_SETS"

@@ -48,6 +48,84 @@ jobs:
 
 ---
 
+### `test-rust.yml` — Run rustfmt, clippy and cargo test (optionally Windows under Wine)
+
+```yaml
+jobs:
+  test:
+    uses: pitmonkey/.github/.github/workflows/test-rust.yml@main
+    with:
+      extra-cargo-args: -p my-app --no-default-features
+      windows: true
+```
+
+| Input | Default | Description |
+|---|---|---|
+| `runner` | `asus-amd64-wine` | Runner label |
+| `working-directory` | `.` | Directory holding the Cargo workspace |
+| `toolchain` | `stable` | Rust toolchain for `dtolnay/rust-toolchain` |
+| `cargo-args` | `--workspace` | Package/feature selection for both `cargo clippy` and `cargo test` |
+| `extra-cargo-args` | `""` | More argument sets, one per line, each checked and tested like `cargo-args` (e.g. a `--no-default-features` build) |
+| `windows` | `false` | Also run clippy and the tests for `x86_64-pc-windows-gnu`, the tests under Wine |
+| `wine` | `wine64` | Wine binary used as cargo's test runner |
+
+The `linux` job runs `cargo fmt --all --check`, then `cargo clippy <args> --all-targets -- -D warnings` and `cargo test <args> --no-fail-fast` for each argument set. The `windows` job repeats clippy and test with `--target x86_64-pc-windows-gnu`, with `CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER` set to Wine, so each test executable runs as a Windows program. This replaces a GitHub-hosted `windows-latest` job, which private repos pay for at twice the Linux rate. Tests behind `#[cfg(unix)]` or `#[cfg(windows)]` are selected exactly as on a Windows machine. Wine is not Windows, so keep an occasional real-Windows run (for example a `workflow_dispatch` or release-tag job on `windows-latest`) for what Wine cannot show.
+
+Debug info and incremental compilation are turned off (`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`, `CARGO_INCREMENTAL=0`): they make up most of `target/`, and on the first caller a 19 GB debug `target/` dropped to about 2 GB per target. `Swatinem/rust-cache` keeps dependencies between runs in the Actions cache.
+
+**Runner:** `asus-amd64-wine` is the ARC scale set with mingw-w64, Wine and Xvfb in its image, no DinD, and a work volume sized for Rust. `asus-amd64-dind`'s 4Gi work volume is too small for a Rust workspace (see `docs/arc-runners.md` in `k3s-infra`).
+
+**Required org secrets:** none.
+
+---
+
+### `build-rust.yml` — Build a release binary for one target
+
+```yaml
+jobs:
+  build:
+    needs: [test]
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu.2.17
+            zigbuild: true
+            artifact: my-app-linux-x86_64
+            smoke: '"$BIN" --version'
+          - target: x86_64-pc-windows-gnu
+            zigbuild: false
+            artifact: my-app-windows-x86_64
+            smoke: '"$WINE" "$BIN" --version'
+    uses: pitmonkey/.github/.github/workflows/build-rust.yml@main
+    with:
+      package: my-app
+      target: ${{ matrix.target }}
+      zigbuild: ${{ matrix.zigbuild }}
+      smoke-test: ${{ matrix.smoke }}
+      artifact-name: ${{ matrix.artifact }}
+```
+
+| Input | Default | Description |
+|---|---|---|
+| `runner` | `asus-amd64-wine` | Runner label |
+| `working-directory` | `.` | Directory holding the Cargo workspace |
+| `toolchain` | `stable` | Rust toolchain |
+| `package` | required | Cargo package to build (`-p`) |
+| `binary` | `""` | Binary name without `.exe`; empty = `package` |
+| `target` | `x86_64-unknown-linux-gnu` | Target triple; with `zigbuild`, a glibc version may be appended (`x86_64-unknown-linux-gnu.2.17`) |
+| `cargo-args` | `""` | More `cargo build` arguments (features) |
+| `rustflags` | `""` | `RUSTFLAGS` for the build (e.g. `-C target-feature=+crt-static`) |
+| `zigbuild` | `false` | Build with `cargo-zigbuild`, which links against an older glibc |
+| `smoke-test` | `""` | Shell commands run after the build, with `$BIN` (binary path) and `$WINE` set |
+| `artifact-name` | `""` | Upload the binary under this name; empty = no upload |
+| `wine` | `wine64` | Wine binary, as `$WINE` in the smoke test |
+
+Windows targets (`x86_64-pc-windows-gnu`) are cross-compiled with mingw-w64; with `rustflags: -C target-feature=+crt-static` the `.exe` imports only DLLs that ship with Windows. The smoke test runs it under Wine.
+
+**Required org secrets:** none.
+
+---
+
 ### `build-docker.yml` — Build and push Docker image to GHCR
 
 ```yaml
