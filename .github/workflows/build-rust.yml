@@ -91,7 +91,7 @@ jobs:
         with:
           toolchain: ${{ inputs.toolchain }}
           targets: ${{ steps.paths.outputs.triple }}
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           workspaces: ${{ inputs.working-directory }}
           key: ${{ inputs.target }}
