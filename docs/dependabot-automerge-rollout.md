@@ -5,8 +5,11 @@ Inventory inspected every workflow in 59 active org repositories on 2026-11-09;
 
 ## Prepared state
 
-The client-ID variable is configured with selected-repository access for all 21
-callers. The private-key secret and live pilot remain pending. The shared branch
+The client-ID variable and private-key Actions secret are configured with selected-
+repository access for all 21 callers. The key successfully authenticated as
+`pitmonkey-coder` and minted a token restricted to kubs-log-analysis with Contents,
+Pull requests and Workflows write permissions; the validation token was revoked.
+The live Dependabot merge pilot remains pending. The shared branch
 contains the self-caller migration. Twenty external caller patches are prepared
 under `/tmp/issue45-rollout/` in the implementation workspace; each repository has
 its changed workflow and a separate `.patch` file. These are preparation artifacts,
