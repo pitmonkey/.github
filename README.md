@@ -255,9 +255,19 @@ permissions:
 jobs:
   automerge:
     uses: pitmonkey/.github/.github/workflows/dependabot-automerge.yml@main
+    with:
+      app-client-id: ${{ vars.PITMONKEY_CODER_CLIENT_ID }}
+    secrets:
+      app-private-key: ${{ secrets.PITMONKEY_CODER_PRIVATE_KEY }}
 ```
 
-No inputs, no secrets. Permissions must be declared in the **caller** — a reusable workflow's permissions are capped by the caller's grant, so omitting them makes the merge step fail with a 403.
+| Input | Default | Description |
+|---|---|---|
+| `app-client-id` | `""` | GitHub App client ID. Empty preserves legacy `GITHUB_TOKEN` authentication. |
+
+**Secret:** `app-private-key` — the App's PEM private key, required when `app-client-id` is non-empty. Explicit mapping above forwards only this credential.
+
+Permissions must be declared in the **caller** — a reusable workflow's permissions are capped by the caller's grant, so omitting them makes the merge step fail with a 403.
 
 Enables GitHub's native auto-merge (`gh pr merge --auto --squash`) when Dependabot metadata matches any of:
 
@@ -274,7 +284,24 @@ Two things this depends on:
 - **`ci-green` must be a required status check on the default branch.** `--auto` waits on required checks; with none configured it merges as soon as the PR is mergeable, which defeats the point. The org ruleset `ci-green-required` supplies this.
 - **`dependabot.yml` must split `uv` into `uv-dev` and `uv-prod` groups.** Dependabot reports the *most-privileged* dependency type across the whole PR, so a group mixing dev and prod deps always reads as `direct:production` and never qualifies.
 
-Merges enabled with `GITHUB_TOKEN` do not trigger `push`-event workflows, so an auto-merged bump does not rebuild or push images. That is fine for the three eligible ecosystems — none change a runtime image's contents. Adding `docker` or `uv-prod` to the eligible set would require swapping to a PAT.
+App-authenticated merges trigger the caller's normal `push` workflows, including builds and image publication. The workflow requests a token restricted to the caller repository, with Contents, Pull requests, and Workflows write permissions. Workflows write is needed for GitHub Actions dependency updates. Required checks still gate the merge; the App must not have ruleset bypass privileges. Token generation is skipped for ineligible updates. An opted-in caller with invalid credentials fails rather than falling back to `GITHUB_TOKEN`.
+
+Callers that omit `app-client-id` retain the previous behavior: `GITHUB_TOKEN` enables auto-merge, but the merge does **not** trigger push CI. This compatibility path allows callers to migrate after the shared workflow is published.
+
+#### Configure the existing `pitmonkey-coder` App
+
+The org installation already covers all repositories. Its App ID is `5606715`; its **client ID** is `Iv23liyMdjpPInjnQcVD`. Set org Actions variable `PITMONKEY_CODER_CLIENT_ID` to that client ID and org Actions secret `PITMONKEY_CODER_PRIVATE_KEY` to the complete PEM key, granting access to adopting repositories. These credentials are consumed by `pull_request_target` and belong in the Actions scope. Feed the private key through stdin; never pass its contents as a command argument:
+
+```bash
+gh variable set PITMONKEY_CODER_CLIENT_ID --org pitmonkey --visibility all --body Iv23liyMdjpPInjnQcVD
+gh secret set PITMONKEY_CODER_PRIVATE_KEY --org pitmonkey --visibility all < /path/to/private-key.pem
+```
+
+If credentials are deliberately restricted to selected repositories, grant every adopting caller access before migration. Publish the shared workflow first, migrate kubs-log-analysis as the pilot, then migrate the other callers using the example above. A missing client-ID variable resolves to empty and retains legacy behavior, so verify the variable is visible in each migrated repository.
+
+Validate with an eligible Dependabot PR: required `ci-green` must pass before merge, the merge actor must be `pitmonkey-coder`, and a `push` CI run must reference the resulting merge SHA. For image-producing repositories, verify publication from that SHA. Roll back a caller by removing the App input and secret mapping. See [rollout inventory](docs/dependabot-automerge-rollout.md).
+
+Local regression checks: `uv run --with pyyaml python -m unittest discover -s tests -v`. Run `actionlint` for workflow syntax and expression validation. Version 1.7.12 has stale bundled metadata for `actions/create-github-app-token@v3`: the released action supports `client-id` and does not require `app-id`. If that version reports those two input errors, verify the released action manifest and ignore only those diagnostics.
 
 ---
 
@@ -354,6 +381,7 @@ All but `OPS_UI_TOKEN` live only under **Actions**. `OPS_UI_TOKEN` must be set u
 | `SLACK_BOT_TOKEN` | Slack bot auth for CI notifications |
 | `SLACK_CHANNEL_ID` | Slack channel for CI notifications |
 | `PROJECT_PAT` | Classic PAT with `project` scope for org project board |
+| `PITMONKEY_CODER_PRIVATE_KEY` | App PEM private key for Dependabot auto-merge; Actions scope, accessible to adopting callers |
 | `OPS_UI_TOKEN` | Fine-grained PAT, `Contents: Read` on the private repos used as git dependencies (today `pitmonkey/ops-ui`). **Must be set in the Actions *and* Dependabot scopes** — see below |
 
 ### Rotating `OPS_UI_TOKEN`
@@ -389,6 +417,7 @@ The org does not require approval for fine-grained PATs, so a newly minted or re
 | Variable | Purpose |
 |---|---|
 | `ORG_PROJECT_ID` | ProjectV2 node ID (`PVT_kwDO...`) for the central project board |
+| `PITMONKEY_CODER_CLIENT_ID` | `Iv23liyMdjpPInjnQcVD`, the existing `pitmonkey-coder` client ID for Dependabot auto-merge |
 
 Find your project node ID:
 ```bash
