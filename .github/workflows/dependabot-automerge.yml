@@ -11,6 +11,15 @@ name: Reusable - Dependabot auto-merge
 
 on:
   workflow_call:
+    inputs:
+      app-client-id:
+        description: GitHub App client ID; empty preserves legacy GITHUB_TOKEN auto-merge
+        type: string
+        default: ''
+    secrets:
+      app-private-key:
+        description: Private key for app-client-id; required when opting into App authentication
+        required: false
 
 jobs:
   dev-tooling-automerge:
@@ -30,11 +39,37 @@ jobs:
       # so a grouped PR only reads as development when every member is a dev dep.
       # Dependabot has no dev/prod concept for pre-commit or github-actions and
       # reports both as direct:production, hence the explicit ecosystem clauses.
+      # App-attributed merges trigger push CI. GITHUB_TOKEN merges do not.
+      # Restrict this token to the caller repo, including workflow updates so
+      # github_actions bumps can merge. Never grant branch-protection bypass.
+      - name: Generate auto-merge App token
+        id: app-token
+        if: >-
+          inputs.app-client-id != '' &&
+          (steps.meta.outputs.dependency-type == 'direct:development' ||
+          steps.meta.outputs.package-ecosystem == 'pre_commit' ||
+          steps.meta.outputs.package-ecosystem == 'github_actions')
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.app-client-id }}
+          private-key: ${{ secrets.app-private-key }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
       - name: Enable auto-merge for dev-tooling updates
         if: >-
           steps.meta.outputs.dependency-type == 'direct:development' ||
           steps.meta.outputs.package-ecosystem == 'pre_commit' ||
           steps.meta.outputs.package-ecosystem == 'github_actions'
-        run: gh pr merge --auto --squash "${{ github.event.pull_request.html_url }}"
+        run: |
+          if [[ -n "$APP_CLIENT_ID" ]]; then
+            # Never silently fall back if an opted-in caller has broken App auth.
+            export GH_TOKEN="${APP_TOKEN:?GitHub App token is empty}"
+          fi
+          gh pr merge --auto --squash "$PR_URL"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_CLIENT_ID: ${{ inputs.app-client-id }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
