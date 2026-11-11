@@ -1,0 +1,206 @@
+name: Reusable - Dependabot uv re-lock
+
+# Re-locks every uv project in the caller repo on a Dependabot `uv` pull request and pushes
+# any changed `uv.lock` files back to the PR branch as the pitmonkey-coder App.
+#
+# Why: Dependabot re-locks only the directory it bumps. In a repo whose components depend
+# on a shared package through a uv path source, the dependents' locks go stale (see
+# pitmonkey/github-dispatcher#297). A caller running CI with `uv-sync-args: --locked` turns
+# that into a red PR. This workflow turns the red PR back green without a human.
+#
+# SECURITY: callers invoke this from `pull_request_target`, which runs with the base repo's
+# secrets. `uv lock` can execute build backends (path packages, sdists without static
+# metadata), so the work is split in two jobs:
+#   relock  runs the PR's code with a read-only GITHUB_TOKEN, no persisted credential and
+#           no App token. It does see the read-only ops-ui-token (private uv git deps),
+#           which is the same exposure as the caller's ordinary Dependabot CI, where the
+#           same PR code runs `uv sync` and the tests with the same token. It emits a patch.
+#   push    never runs PR code and runs on an ephemeral GitHub-hosted runner, so nothing
+#           `relock` left on a self-hosted machine can reach the App token. It rejects any
+#           patch that does more than edit tracked uv.lock files, then mints the App token,
+#           applies the patch, commits and pushes.
+# Never mint the App token in `relock`, never run `uv` or repo scripts in `push`, and never
+# move `push` onto a self-hosted runner.
+#
+# The gate requires both the PR author and the triggering actor to be dependabot[bot], so
+# a human push to a Dependabot branch, and this workflow's own App push, do not run it.
+#
+# Every `${{ }}` that carries PR-controlled text (branch names, paths) reaches a shell only
+# through `env:`, never by inline interpolation into `run:`.
+
+on:
+  workflow_call:
+    inputs:
+      app-client-id:
+        description: GitHub App client ID used to push the re-lock commit
+        type: string
+        required: true
+      runner:
+        description: Runner for the relock job only; push always runs on ubuntu-latest
+        type: string
+        default: pi-arm64
+      paths-ignore-glob:
+        description: Bash glob; directories (relative to the repo root, "." for the root) that match are not re-locked
+        type: string
+        default: ""
+    secrets:
+      app-private-key:
+        description: Private key for app-client-id
+        required: true
+      ops-ui-token:
+        description: Read-only PAT for private uv git dependencies (same role as OPS_UI_TOKEN in test-python.yml)
+        required: false
+
+jobs:
+  relock:
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'dependabot/uv/')
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.3
+      # Same private-dependency rewrite and empty-secret guard as test-python.yml: step env
+      # only (never `git config --global` on a self-hosted runner), and GIT_CONFIG_COUNT 0
+      # when the token is absent so public fetches are not rewritten to an empty credential.
+      # Under `pull_request_target` the caller maps the Actions-scope OPS_UI_TOKEN.
+      - name: Re-lock every uv project
+        env:
+          IGNORE_GLOB: ${{ inputs.paths-ignore-glob }}
+          GIT_CONFIG_COUNT: ${{ secrets.ops-ui-token != '' && 1 || 0 }}
+          GIT_CONFIG_KEY_0: "url.https://x-access-token:${{ secrets.ops-ui-token }}@github.com/.insteadOf"
+          GIT_CONFIG_VALUE_0: "https://github.com/"
+        run: |
+          set -euo pipefail
+          git ls-files -z -- '*uv.lock' | while IFS= read -r -d '' lock; do
+            dir=$(dirname -- "$lock")
+            # Unquoted on purpose: IGNORE_GLOB is a glob pattern.
+            # shellcheck disable=SC2053
+            if [[ -n "$IGNORE_GLOB" && "$dir" == $IGNORE_GLOB ]]; then
+              echo "skip $dir (paths-ignore-glob)"
+              continue
+            fi
+            echo "uv lock in $dir"
+            uv lock --directory "$dir"
+          done
+      - name: Collect lock changes
+        id: diff
+        run: |
+          set -euo pipefail
+          git diff --binary -- '*uv.lock' > relock.patch
+          if [[ -s relock.patch ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --stat -- '*uv.lock'
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "every uv.lock is already current"
+          fi
+      - if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: uv-relock-patch
+          path: relock.patch
+          retention-days: 1
+
+  push:
+    needs: relock
+    if: needs.relock.outputs.changed == 'true'
+    # Ephemeral and GitHub-hosted on purpose; see the SECURITY note at the top.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: dependabot-uv-relock-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: uv-relock-patch
+          path: ${{ runner.temp }}/uv-relock
+      # The patch came out of a job that ran PR code. Accept it only if every path it
+      # touches is a file named uv.lock that already exists, and it creates, deletes,
+      # renames or re-modes nothing.
+      - name: Verify the patch only edits uv.lock files
+        env:
+          PATCH_FILE: ${{ runner.temp }}/uv-relock/relock.patch
+        run: |
+          set -euo pipefail
+          refuse() { echo "::error::re-lock patch refused: $1"; exit 1; }
+          # Git-format diffs only, and none of the headers that create, delete, rename,
+          # copy or re-mode a file. A plain unified diff ("--- /dev/null") is refused too.
+          grep -q '^diff --git ' "$PATCH_FILE" || refuse "not a git-format diff"
+          if grep -Eq '^(new file mode|deleted file mode|old mode|new mode|rename from|rename to|copy from|copy to|similarity index) ' "$PATCH_FILE"; then
+            refuse "it creates, deletes, renames or re-modes a file"
+          fi
+          if grep -Eq '^(---|\+\+\+) /dev/null' "$PATCH_FILE"; then
+            refuse "it creates or deletes a file"
+          fi
+          # Read the NUL-separated numstat records directly, so a path containing a newline
+          # is checked whole rather than split into an innocent first line.
+          count=0
+          while IFS= read -r -d '' record; do
+            path=${record#*$'\t'}
+            path=${path#*$'\t'}
+            [[ "$(basename -- "$path")" == "uv.lock" ]] || refuse "it touches $path, which is not a uv.lock"
+            git ls-files --error-unmatch -- "$path" >/dev/null 2>&1 || refuse "$path is not a tracked file"
+            count=$((count + 1))
+          done < <(git apply --numstat -z "$PATCH_FILE")
+          (( count > 0 )) || refuse "it names no files"
+          git apply --check "$PATCH_FILE"
+      - name: Generate App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.app-client-id }}
+          private-key: ${{ secrets.app-private-key }}
+          permission-contents: write
+      - name: Commit and push the re-locked files
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          PATCH_FILE: ${{ runner.temp }}/uv-relock/relock.patch
+          REPO: ${{ github.repository }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          : "${GH_TOKEN:?GitHub App token is empty}"
+          bot_id=$(gh api "/users/${APP_SLUG}%5Bbot%5D" --jq .id)
+          [[ "$bot_id" =~ ^[0-9]+$ ]] || { echo "::error::could not resolve the App's bot user id"; exit 1; }
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git apply "$PATCH_FILE"
+          git add --update -- '*uv.lock'
+          git commit -m "chore(deps): re-lock uv projects after dependency update"
+          # The credential rides in env-scoped git config for these commands only, never in
+          # a URL (process listings) or the runner's global config.
+          basic=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${basic}"
+          # The lease makes "branch moved since relock" atomic with the push: if Dependabot
+          # rebased in the meantime the push is refused, and that run's own synchronize
+          # event re-locks the new head.
+          if ! git push --force-with-lease="refs/heads/${HEAD_REF}:${HEAD_SHA}" \
+              "https://github.com/${REPO}.git" "HEAD:refs/heads/${HEAD_REF}"; then
+            current=$(git ls-remote "https://github.com/${REPO}.git" "refs/heads/${HEAD_REF}" | cut -f1)
+            if [[ "$current" != "$HEAD_SHA" ]]; then
+              echo "branch moved from $HEAD_SHA to ${current:-<deleted>}; the next run re-locks it"
+              exit 0
+            fi
+            echo "::error::push refused with the branch still at $HEAD_SHA"
+            exit 1
+          fi

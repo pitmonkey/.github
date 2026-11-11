@@ -303,6 +303,52 @@ Validate with an eligible Dependabot PR: required `ci-green` must pass before me
 
 Local regression checks: `uv run --with pyyaml python -m unittest discover -s tests -v`. Run `actionlint` for workflow syntax and expression validation. Version 1.7.12 has stale bundled metadata for `actions/create-github-app-token@v3`: the released action supports `client-id` and does not require `app-id`. If that version reports those two input errors, verify the released action manifest and ignore only those diagnostics.
 
+### `dependabot-uv-relock.yml` — Re-lock uv projects on Dependabot PRs
+
+Dependabot re-locks only the directory it bumps. In a repo whose components depend on a shared package through a uv path source (github-dispatcher: `contracts` consumed by `dispatcher` and every worker), the dependents' `uv.lock` files go stale. pitmonkey/github-dispatcher#297 did exactly that and still passed CI. This workflow runs `uv lock` in every directory that has a `uv.lock` and pushes any changed lock back to the Dependabot branch as `pitmonkey-coder`, so CI re-runs on the fixed commit.
+
+Pair it with `uv-sync-args: --locked` on `test-python.yml` / `lint-python.yml`. That makes a stale lock fail CI, and this workflow is what turns it green again without a human.
+
+```yaml
+# .github/workflows/dependabot-uv-relock.yml in each consuming repo
+name: dependabot-uv-relock
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  relock:
+    uses: pitmonkey/.github/.github/workflows/dependabot-uv-relock.yml@main
+    with:
+      app-client-id: ${{ vars.PITMONKEY_CODER_CLIENT_ID }}
+    secrets:
+      app-private-key: ${{ secrets.PITMONKEY_CODER_PRIVATE_KEY }}
+      ops-ui-token: ${{ secrets.OPS_UI_TOKEN }}
+```
+
+| Input | Default | Description |
+|---|---|---|
+| `app-client-id` | required | GitHub App client ID that pushes the re-lock commit. |
+| `runner` | `pi-arm64` | Runner label for both jobs. |
+| `paths-ignore-glob` | `""` | Bash glob; directories it matches (relative to the root, `.` for the root) are not re-locked. |
+
+**Secrets:** `app-private-key` (required) and `ops-ui-token` (optional; the read-only PAT for private uv git dependencies, as in `test-python.yml`).
+
+It runs only for a PR opened by `dependabot[bot]`, from the same repository, on a `dependabot/uv/*` branch. Anything else is skipped.
+
+**Why `pull_request_target`.** A Dependabot `pull_request` run gets a read-only `GITHUB_TOKEN` and only Dependabot-scoped secrets, so it cannot push. A `GITHUB_TOKEN` push would not re-trigger CI anyway. `pull_request_target` runs with the Actions-scope secrets, so it maps the Actions copy of `OPS_UI_TOKEN`; see "Rotating `OPS_UI_TOKEN`". It does run PR code, because `uv lock` can execute build backends, so the work is split:
+
+- **`relock`** checks out the PR head with `persist-credentials: false` under a read-only token, runs `uv lock`, and uploads a patch of the `uv.lock` changes. It never holds the App token.
+- **`push`** runs no PR code. It refuses the patch unless every path it touches is an existing file named `uv.lock` (nothing created, deleted, renamed or re-moded). Only then does it mint an App token with `contents: write` and commit. If the branch moved since `relock` checked it out, it pushes nothing; the next `synchronize` run handles it.
+
+The App's push triggers `synchronize`, and that run finds every lock current and pushes nothing, so it cannot loop. Dependabot stops rebasing a PR once another actor has committed to it. `@dependabot recreate` drops the re-lock commit, and the next run adds it back.
+
+Local regression checks: `uv run --with pyyaml python -m unittest discover -s tests -v`.
+
 ---
 
 ## Full CI Example
