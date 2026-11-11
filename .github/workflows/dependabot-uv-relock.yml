@@ -11,11 +11,19 @@ name: Reusable - Dependabot uv re-lock
 # SECURITY: callers invoke this from `pull_request_target`, which runs with the base repo's
 # secrets. `uv lock` can execute build backends (path packages, sdists without static
 # metadata), so the work is split in two jobs:
-#   relock  runs the PR's code, holding only a read-only GITHUB_TOKEN, no persisted
-#           credential and no App token. It emits a patch.
-#   push    never runs PR code: it rejects any patch touching anything but a uv.lock,
-#           then mints the App token, applies the patch, commits and pushes.
-# Never mint the App token in `relock`, and never run `uv` or repo scripts in `push`.
+#   relock  runs the PR's code with a read-only GITHUB_TOKEN, no persisted credential and
+#           no App token. It does see the read-only ops-ui-token (private uv git deps),
+#           which is the same exposure as the caller's ordinary Dependabot CI, where the
+#           same PR code runs `uv sync` and the tests with the same token. It emits a patch.
+#   push    never runs PR code and runs on an ephemeral GitHub-hosted runner, so nothing
+#           `relock` left on a self-hosted machine can reach the App token. It rejects any
+#           patch that does more than edit tracked uv.lock files, then mints the App token,
+#           applies the patch, commits and pushes.
+# Never mint the App token in `relock`, never run `uv` or repo scripts in `push`, and never
+# move `push` onto a self-hosted runner.
+#
+# The gate requires both the PR author and the triggering actor to be dependabot[bot], so
+# a human push to a Dependabot branch, and this workflow's own App push, do not run it.
 #
 # Every `${{ }}` that carries PR-controlled text (branch names, paths) reaches a shell only
 # through `env:`, never by inline interpolation into `run:`.
@@ -28,6 +36,7 @@ on:
         type: string
         required: true
       runner:
+        description: Runner for the relock job only; push always runs on ubuntu-latest
         type: string
         default: pi-arm64
       paths-ignore-glob:
@@ -46,6 +55,7 @@ jobs:
   relock:
     if: >-
       github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.actor == 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       startsWith(github.event.pull_request.head.ref, 'dependabot/uv/')
     runs-on: ${{ inputs.runner }}
@@ -104,9 +114,13 @@ jobs:
   push:
     needs: relock
     if: needs.relock.outputs.changed == 'true'
-    runs-on: ${{ inputs.runner }}
+    # Ephemeral and GitHub-hosted on purpose; see the SECURITY note at the top.
+    runs-on: ubuntu-latest
     permissions:
       contents: read
+    concurrency:
+      group: dependabot-uv-relock-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -124,21 +138,27 @@ jobs:
           PATCH_FILE: ${{ runner.temp }}/uv-relock/relock.patch
         run: |
           set -euo pipefail
+          refuse() { echo "::error::re-lock patch refused: $1"; exit 1; }
+          # Git-format diffs only, and none of the headers that create, delete, rename,
+          # copy or re-mode a file. A plain unified diff ("--- /dev/null") is refused too.
+          grep -q '^diff --git ' "$PATCH_FILE" || refuse "not a git-format diff"
           if grep -Eq '^(new file mode|deleted file mode|old mode|new mode|rename from|rename to|copy from|copy to|similarity index) ' "$PATCH_FILE"; then
-            echo "::error::re-lock patch creates, deletes, renames or re-modes a file; refusing it"
-            exit 1
+            refuse "it creates, deletes, renames or re-modes a file"
           fi
-          paths=$(git apply --numstat -z "$PATCH_FILE" | tr '\0' '\n' | awk -F'\t' 'NF >= 3 {print $3}')
-          if [[ -z "$paths" ]]; then
-            echo "::error::re-lock patch names no files; refusing it"
-            exit 1
+          if grep -Eq '^(---|\+\+\+) /dev/null' "$PATCH_FILE"; then
+            refuse "it creates or deletes a file"
           fi
-          while IFS= read -r path; do
-            if [[ "$(basename -- "$path")" != "uv.lock" ]]; then
-              echo "::error::re-lock patch touches $path, which is not a uv.lock; refusing it"
-              exit 1
-            fi
-          done <<< "$paths"
+          # Read the NUL-separated numstat records directly, so a path containing a newline
+          # is checked whole rather than split into an innocent first line.
+          count=0
+          while IFS= read -r -d '' record; do
+            path=${record#*$'\t'}
+            path=${path#*$'\t'}
+            [[ "$(basename -- "$path")" == "uv.lock" ]] || refuse "it touches $path, which is not a uv.lock"
+            git ls-files --error-unmatch -- "$path" >/dev/null 2>&1 || refuse "$path is not a tracked file"
+            count=$((count + 1))
+          done < <(git apply --numstat -z "$PATCH_FILE")
+          (( count > 0 )) || refuse "it names no files"
           git apply --check "$PATCH_FILE"
       - name: Generate App token
         id: app-token
@@ -149,7 +169,7 @@ jobs:
           permission-contents: write
       - name: Commit and push the re-locked files
         env:
-          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
           PATCH_FILE: ${{ runner.temp }}/uv-relock/relock.patch
           REPO: ${{ github.repository }}
@@ -157,26 +177,30 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          : "${APP_TOKEN:?GitHub App token is empty}"
-          # The credential rides in env-scoped git config for this step only, never in a
-          # URL (process listings) or the runner's global config.
-          export GIT_CONFIG_COUNT=1
-          export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
-          basic=$(printf 'x-access-token:%s' "$APP_TOKEN" | base64 -w0)
-          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${basic}"
-          remote="https://github.com/${REPO}.git"
-          current=$(git ls-remote "$remote" "refs/heads/${HEAD_REF}" | cut -f1)
-          if [[ "$current" != "$HEAD_SHA" ]]; then
-            echo "branch moved from $HEAD_SHA to ${current:-<deleted>}; the next run re-locks it"
-            exit 0
-          fi
-          # curl, not gh: self-hosted runners are not guaranteed to have the gh CLI.
-          bot_id=$(curl -fsS -H "Authorization: Bearer ${APP_TOKEN}" \
-            "https://api.github.com/users/${APP_SLUG}%5Bbot%5D" \
-            | grep -Eo '"id": *[0-9]+' | head -1 | grep -Eo '[0-9]+')
+          : "${GH_TOKEN:?GitHub App token is empty}"
+          bot_id=$(gh api "/users/${APP_SLUG}%5Bbot%5D" --jq .id)
+          [[ "$bot_id" =~ ^[0-9]+$ ]] || { echo "::error::could not resolve the App's bot user id"; exit 1; }
           git config user.name "${APP_SLUG}[bot]"
           git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
           git apply "$PATCH_FILE"
           git add --update -- '*uv.lock'
           git commit -m "chore(deps): re-lock uv projects after dependency update"
-          git push "$remote" "HEAD:refs/heads/${HEAD_REF}"
+          # The credential rides in env-scoped git config for these commands only, never in
+          # a URL (process listings) or the runner's global config.
+          basic=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${basic}"
+          # The lease makes "branch moved since relock" atomic with the push: if Dependabot
+          # rebased in the meantime the push is refused, and that run's own synchronize
+          # event re-locks the new head.
+          if ! git push --force-with-lease="refs/heads/${HEAD_REF}:${HEAD_SHA}" \
+              "https://github.com/${REPO}.git" "HEAD:refs/heads/${HEAD_REF}"; then
+            current=$(git ls-remote "https://github.com/${REPO}.git" "refs/heads/${HEAD_REF}" | cut -f1)
+            if [[ "$current" != "$HEAD_SHA" ]]; then
+              echo "branch moved from $HEAD_SHA to ${current:-<deleted>}; the next run re-locks it"
+              exit 0
+            fi
+            echo "::error::push refused with the branch still at $HEAD_SHA"
+            exit 1
+          fi

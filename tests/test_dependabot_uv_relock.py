@@ -65,9 +65,10 @@ class GateTest(unittest.TestCase):
         self.jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
 
     def gate(self, author="dependabot[bot]", head_repo="o/r", repo="o/r",
-             ref="dependabot/uv/contracts/pydantic-2.14.3"):
+             ref="dependabot/uv/contracts/pydantic-2.14.3", actor="dependabot[bot]"):
         return condition(self.jobs["relock"]["if"], {
             "github.event.pull_request.user.login": author,
+            "github.actor": actor,
             "github.event.pull_request.head.repo.full_name": head_repo,
             "github.repository": repo,
             "github.event.pull_request.head.ref": ref,
@@ -78,6 +79,12 @@ class GateTest(unittest.TestCase):
 
     def test_skips_a_human_pr(self):
         self.assertFalse(self.gate(author="someone"))
+
+    def test_skips_a_human_push_to_a_dependabot_branch(self):
+        self.assertFalse(self.gate(actor="someone"))
+
+    def test_skips_its_own_app_push(self):
+        self.assertFalse(self.gate(actor="pitmonkey-coder[bot]"))
 
     def test_skips_a_fork_pr(self):
         self.assertFalse(self.gate(head_repo="attacker/r"))
@@ -105,6 +112,9 @@ class CredentialSplitTest(unittest.TestCase):
         self.assertFalse(any(s.get("uses", "").startswith("actions/create-github-app-token@")
                              for s in relock["steps"]))
         self.assertNotIn("app-private-key", yaml.safe_dump(relock))
+
+    def test_push_runs_on_an_ephemeral_hosted_runner(self):
+        self.assertEqual(self.jobs["push"]["runs-on"], "ubuntu-latest")
 
     def test_push_never_runs_repo_code(self):
         push = self.jobs["push"]
@@ -166,17 +176,20 @@ class VerifyPatchTest(unittest.TestCase):
         self.step = step_named(yaml.safe_load(WORKFLOW.read_text())["jobs"]["push"],
                                "Verify the patch only edits uv.lock files")
 
-    def verify(self, change):
+    def verify(self, change=None, raw=None):
         with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as out:
             make_repo(repo, {"uv.lock": "a\n", "svc/uv.lock": "b\n", "pyproject.toml": "p\n"})
-            change(Path(repo))
             patch = Path(out) / "uv-relock" / "relock.patch"
             patch.parent.mkdir()
-            git(repo, "add", "-N", ".")
-            patch.write_text(subprocess.run(["git", "diff", "--binary"], cwd=repo, text=True,
-                                            capture_output=True, check=True).stdout)
-            git(repo, "reset", "-q", "--hard")
-            git(repo, "clean", "-qfd")
+            if raw is not None:
+                patch.write_text(raw)
+            else:
+                change(Path(repo))
+                git(repo, "add", "-N", ".")
+                patch.write_text(subprocess.run(["git", "diff", "--binary"], cwd=repo, text=True,
+                                                capture_output=True, check=True).stdout)
+                git(repo, "reset", "-q", "--hard")
+                git(repo, "clean", "-qfd")
             return run_step(self.step, repo, {"runner.temp": out})
 
     def test_accepts_lock_only_changes(self):
@@ -199,6 +212,17 @@ class VerifyPatchTest(unittest.TestCase):
             (repo / "new").mkdir()
             (repo / "new/uv.lock").write_text("x\n")
         self.assertNotEqual(self.verify(change).returncode, 0)
+
+    def test_rejects_a_plain_unified_diff_creating_a_lock(self):
+        raw = ("--- /dev/null\n+++ b/.github/workflows/uv.lock\n@@ -0,0 +1 @@\n+x\n")
+        self.assertNotEqual(self.verify(raw=raw).returncode, 0)
+
+    def test_rejects_a_git_diff_creating_an_untracked_lock_without_mode_header(self):
+        raw = ("diff --git a/new/uv.lock b/new/uv.lock\n--- a/new/uv.lock\n+++ b/new/uv.lock\n"
+               "@@ -1 +1 @@\n-x\n+y\n")
+        result = self.verify(raw=raw)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not a tracked file", result.stdout)
 
     def test_rejects_a_mode_change(self):
         def change(repo):
