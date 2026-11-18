@@ -42,6 +42,10 @@ on:
         description: "Login to Docker Hub to avoid pull rate limits (requires DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets)"
         type: boolean
         default: false
+      wheel-check:
+        description: "On Dependabot base-image PRs, check every locked runtime dependency has a wheel for the new Python version before building (check-wheels.yml). Set false for an image that compiles dependencies on purpose."
+        type: boolean
+        default: true
 
 # Cancel superseded runs per ref: a rapid push sequence otherwise piles builds
 # onto the limited self-hosted runners, and that load amplifies the ghcr
@@ -51,6 +55,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Base-image PRs only: fail in seconds, naming the package, when a runtime
+  # dependency has no wheel for the new Python version (slim images cannot compile
+  # it). The builds below wait for it, but a skipped check never skips them.
+  wheels:
+    if: >-
+      inputs.wheel-check
+      && github.event_name == 'pull_request'
+      && github.event.pull_request.user.login == 'dependabot[bot]'
+      && startsWith(github.head_ref, 'dependabot/docker/')
+    uses: pitmonkey/.github/.github/workflows/check-wheels.yml@main
+    with:
+      dockerfile: ${{ inputs.dockerfile }}
+      build-context: ${{ inputs.build-context }}
+
   # A Dependabot pull request never pushes an image (push is already false on
   # pull_request events), so building one only burns time on the self-hosted
   # runners. Key on pull_request.user.login rather than github.actor: on a manual
@@ -65,8 +83,10 @@ jobs:
   # than a documented API; if it ever changes, this fails toward skipping the
   # build, which is the previous behaviour rather than something broken.
   build:
+    needs: wheels
     if: >-
-      inputs.platforms == ''
+      !cancelled() && needs.wheels.result != 'failure'
+      && inputs.platforms == ''
       && !(github.event_name == 'pull_request'
       && github.event.pull_request.user.login == 'dependabot[bot]'
       && !startsWith(github.head_ref, 'dependabot/docker/'))
@@ -156,8 +176,10 @@ jobs:
   # image, set `native-arm64: true` to use the legacy per-arch matrix below.
   build-multiplatform:
     # Dependabot guard: see the `build` job.
+    needs: wheels
     if: >-
-      inputs.platforms != '' && !inputs.native-arm64
+      !cancelled() && needs.wheels.result != 'failure'
+      && inputs.platforms != '' && !inputs.native-arm64
       && !(github.event_name == 'pull_request'
       && github.event.pull_request.user.login == 'dependabot[bot]'
       && !startsWith(github.head_ref, 'dependabot/docker/'))
@@ -234,8 +256,10 @@ jobs:
   # ghcr eventual-consistency hardening (per-arch verify loop + merge retry).
   build-native-matrix:
     # Dependabot guard: see the `build` job.
+    needs: wheels
     if: >-
-      inputs.platforms != '' && inputs.native-arm64
+      !cancelled() && needs.wheels.result != 'failure'
+      && inputs.platforms != '' && inputs.native-arm64
       && !(github.event_name == 'pull_request'
       && github.event.pull_request.user.login == 'dependabot[bot]'
       && !startsWith(github.head_ref, 'dependabot/docker/'))

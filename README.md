@@ -148,6 +148,7 @@ jobs:
 | `platforms` | `""` | Multi-platform targets, e.g. `linux/amd64,linux/arm64`. Empty = native arch only (single job). |
 | `no-cache` | `false` | Pass `no-cache: true` to docker/build-push-action |
 | `dockerhub-auth` | `false` | Login to Docker Hub to bypass pull rate limits (requires `DOCKERHUB_USERNAME` + `DOCKERHUB_TOKEN` secrets) |
+| `wheel-check` | `true` | On Dependabot base-image PRs, run [`check-wheels.yml`](#check-wheelsyml--check-dependency-wheels-for-a-new-python-version) before building. Set `false` for an image that compiles dependencies on purpose (installs `build-essential`). |
 
 Image is pushed only on non-PR events. When `platforms` is non-empty, a single buildkit instance on the amd64 runner builds every platform (arm64 via QEMU emulation) and pushes one manifest list atomically; set `native-arm64: true` to fall back to the per-arch native-runner matrix for a compile-heavy image.
 
@@ -155,11 +156,27 @@ Image is pushed only on non-PR events. When `platforms` is non-empty, a single b
 
 Branches matching `dependabot/docker/*` **do** build. For a library bump the Dockerfile is unchanged and the build proves nothing; for a base-image bump the Dockerfile *is* the change, and building it is the only test that exists. Without the exception such a PR reports a green `ci-green` having never assembled the image — a green tick that did not test the thing being changed.
 
+Before those builds run, the `wheels` job calls `check-wheels.yml` on the same Dockerfile and build context. It fails in seconds, naming the package and platform, when a locked runtime dependency has no wheel for the new Python version — the failure that otherwise surfaces minutes later as a compiler error deep in `uv sync`. The builds wait for it, but a skipped check (every non-base-image run, or `wheel-check: false`) never skips them.
+
 Build cache is stored as a registry image on GHCR at `ghcr.io/<owner>/<image-name>:buildcache` (multi-platform builds use a per-platform `:buildcache-<platform>` tag to avoid collisions). Cache is **read on all events, including PRs** — a fresh ephemeral runner pulls the remote cache tag to reuse layers, so PR builds skip work already done on the last push. Cache is **written only on non-PR events** — PRs push no image, and on self-hosted runners exporting a fresh `mode=max` cache per PR dominated wall-clock (it was ~25 min of the old ~28 min PR builds). Pass `no-cache: true` to skip cache entirely.
 
 **Required org secrets:** none for the push itself (uses the auto-provided `GITHUB_TOKEN`). For Docker Hub auth: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`. `OPS_UI_TOKEN` is forwarded as the BuildKit secret `ops_ui_token` for images with a private git dependency, and is inert for Dockerfiles that never mount it — see [Rotating `OPS_UI_TOKEN`](#rotating-ops_ui_token).
 
 **Required caller permissions:** the calling job must declare `permissions: { contents: read, packages: write, actions: write }` — reusable workflows cannot elevate beyond what the caller grants. `packages: write` covers both the image push and the registry build cache; `actions: write` is used by the multi-platform digest artifact upload.
+
+---
+
+### `check-wheels.yml` — Check dependency wheels for a new Python version
+
+Called by `build-docker.yml` on Dependabot base-image PRs; callers do not need to call it directly.
+
+| Input | Default | Description |
+|---|---|---|
+| `dockerfile` | `Dockerfile` | Dockerfile to read the target Python version from |
+| `build-context` | `.` | Directory holding `uv.lock` |
+| `platforms` | `x86_64-manylinux_2_28,aarch64-manylinux_2_28` | uv `--python-platform` targets to check |
+
+Reads the version from the last `FROM python:<X.Y>` line (a later non-Python stage is fine), then runs `uv export --frozen --no-dev` piped into `uv pip compile --no-build --python-version <X.Y> --python-platform <target>` for each target. `--no-build` refuses source builds, so the compile fails exactly when some runtime dependency has no matching wheel. Git and editable requirements are dropped, so no secret is needed. Skips with a notice when there is no Python base image, the tag is templated, or there is no `uv.lock`. Failures are listed in the job summary.
 
 ---
 
