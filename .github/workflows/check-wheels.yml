@@ -64,13 +64,15 @@ jobs:
           VERSION: ${{ steps.detect.outputs.version }}
         run: |
           cd "$BUILD_CONTEXT"
-          reqs=$(uv export --frozen --no-dev --no-hashes --no-emit-project -q \
-            | grep -vE '(^-e |@ git\+|^git\+)' || true)
+          # Export on its own line so a failed export fails the step; `|| true` covers
+          # only grep finding nothing left after filtering.
+          exported=$(uv export --frozen --no-dev --no-hashes --no-emit-project -q)
+          reqs=$(grep -vE '(^-e |@ git\+|^git\+)' <<< "$exported" || true)
           failed=0
           IFS=',' read -ra targets <<< "$PLATFORMS"
           for platform in "${targets[@]}"; do
             if out=$(uv pip compile - --no-build --python-version "$VERSION" \
-                --python-platform "$platform" -q -o /dev/null <<< "$reqs" 2>&1); then
+                --python-platform "$platform" -q <<< "$reqs" 2>&1); then
               echo "OK: every runtime dependency has a wheel for Python $VERSION on $platform"
             else
               failed=1

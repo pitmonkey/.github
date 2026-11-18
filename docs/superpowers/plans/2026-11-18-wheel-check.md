@@ -61,7 +61,7 @@
 
 - [ ] **Step 2: Run tests, verify they fail** — `uv run --with pyyaml python -m unittest tests.test_check_wheels -v` → errors, workflow file missing.
 
-- [ ] **Step 3: Implement `.github/workflows/check-wheels.yml`.** Job `check` on `pi-arm64`, `permissions: contents: read`, steps: `actions/checkout` (same pin as `build-docker.yml`), `Detect Python version`, `astral-sh/setup-uv@v10.3.3` (only when not skipped), `Check wheels`. Version regex over lines matching `^FROM\s+(--\S+\s+)*python:`: capture `^\d+\.\d+` from the tag; last match wins. Check step: `uv export --frozen --no-dev --no-hashes --no-emit-project` in `build-context`, `grep -vE '(^-e |@ git\+|^git\+)'`, then loop platforms (comma-split) running `uv pip compile - --no-build --python-version "$version" --python-platform "$p" -q -o /dev/null`; collect failures, append to summary, exit 1 if any.
+- [ ] **Step 3: Implement `.github/workflows/check-wheels.yml`.** Job `check` on `pi-arm64`, `permissions: contents: read`, steps: `actions/checkout` (same pin as `build-docker.yml`), `Detect Python version`, `astral-sh/setup-uv@v10.3.3` (only when not skipped), `Check wheels`. Version regex over lines matching `^FROM\s+(--\S+\s+)*python:`: capture `^\d+\.\d+` from the tag; last match wins. Check step: `uv export --frozen --no-dev --no-hashes --no-emit-project` in `build-context` (captured on its own so a failed export fails the step), `grep -vE '(^-e |@ git\+|^git\+)'`, then loop platforms (comma-split) running `uv pip compile - --no-build --python-version "$version" --python-platform "$p" -q` (no `-o`: uv writes output files atomically beside the target, and `/dev` is not writable); collect failures, append to summary, exit 1 if any.
 
 - [ ] **Step 4: Run tests, verify pass** — same command → all OK. Then whole suite: `uv run --with pyyaml python -m unittest discover -s tests -v` → all OK.
 
@@ -82,7 +82,7 @@
 **Interfaces:**
 
 - Consumes: Task 1 `check-wheels.yml` inputs `dockerfile`, `build-context`.
-- Produces: `build-docker.yml` input `wheel-check` (boolean, default `true`); job `wheels` (`uses: ./.github/workflows/check-wheels.yml`, passing `dockerfile`, `build-context`).
+- Produces: `build-docker.yml` input `wheel-check` (boolean, default `true`); job `wheels` (`uses: pitmonkey/.github/.github/workflows/check-wheels.yml@main` (the same `@main` ref every consumer uses for `build-docker.yml`), passing `dockerfile`, `build-context`).
 
 - [ ] **Step 1: Write failing tests** using the `condition()` evaluator pattern, extended to support `!`, `!=` and `needs.wheels.result`/`cancelled()` stubs:
   - `test_wheel_check_input_default_true`.

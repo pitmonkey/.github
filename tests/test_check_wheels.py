@@ -31,7 +31,8 @@ def run_step(step, cwd, values, extra_env=None, path_prefix=None):
         env[key] = substitute(value, values)
     if path_prefix:
         env["PATH"] = path_prefix + ":" + env["PATH"]
-    return subprocess.run(["bash", "-e", "-c", substitute(step["run"], values)],
+    # GitHub runs `run:` steps with `bash --noprofile --norc -eo pipefail {0}`.
+    return subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", substitute(step["run"], values)],
                           cwd=cwd, env=env, text=True, capture_output=True)
 
 
@@ -117,11 +118,13 @@ class DetectTest(unittest.TestCase):
 STUB_UV = """#!/bin/bash
 log="$STUB_LOG"
 if [ "$1" = export ]; then
+  if [ -n "$STUB_EXPORT_FAIL" ]; then echo "error: failed to parse uv.lock" >&2; exit 2; fi
   printf 'httpx==0.28.1\\nops-ui @ git+https://github.com/pitmonkey/ops-ui@abc\\n-e ./contracts\\n'
   exit 0
 fi
 if [ "$1" = pip ] && [ "$2" = compile ]; then
   echo "ARGS $*" >> "$log"
+  for a in "$@"; do [ "$a" = "-o" ] && { echo "error: Permission denied (os error 13) at path \"/dev/.tmpX\"" >&2; exit 2; }; done
   echo "STDIN $(cat | tr '\\n' ' ')" >> "$log"
   if [ -n "$STUB_FAIL_PLATFORM" ] && [[ " $* " == *" $STUB_FAIL_PLATFORM "* ]]; then
     echo "error: Failed to build httptools==0.8.0" >&2
@@ -152,11 +155,11 @@ class CheckTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def check(self, fail_platform=""):
+    def check(self, fail_platform="", export_fail=""):
         values = {"inputs.build-context": ".", "inputs.platforms": DEFAULT_PLATFORMS,
                   "steps.detect.outputs.version": "3.15"}
         return run_step(self.step, self.dir, values, path_prefix=self.bin,
-                        extra_env={"STUB_LOG": str(self.log), "STUB_FAIL_PLATFORM": fail_platform,
+                        extra_env={"STUB_LOG": str(self.log), "STUB_FAIL_PLATFORM": fail_platform, "STUB_EXPORT_FAIL": export_fail,
                                    "GITHUB_STEP_SUMMARY": str(self.summary)})
 
     def test_check_drops_git_and_editable_lines(self):
@@ -175,6 +178,17 @@ class CheckTest(unittest.TestCase):
         for a in args:
             self.assertIn("--no-build", a)
             self.assertIn("--python-version 3.15", a)
+
+    def test_check_writes_no_output_file(self):
+        # uv writes -o targets atomically via a temp file beside them; /dev is not writable.
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("OK: every runtime dependency", result.stdout)
+
+    def test_failed_export_fails_the_check(self):
+        result = self.check(export_fail="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("OK:", result.stdout)
 
     def test_check_fails_and_summarises(self):
         result = self.check(fail_platform="aarch64-manylinux_2_28")

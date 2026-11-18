@@ -42,7 +42,7 @@ uv installed with a pinned `astral-sh/setup-uv` (my call). No secrets.
 **`build-docker.yml` changes.**
 
 - New input `wheel-check` (boolean, default `true`).
-- New job `wheels`, `uses: ./.github/workflows/check-wheels.yml`, runs only when `inputs.wheel-check` and the PR is a Dependabot PR on a `dependabot/docker/*` branch (same expression shape as the existing guard).
+- New job `wheels`, `uses: pitmonkey/.github/.github/workflows/check-wheels.yml@main` (the same `@main` ref every consumer uses for `build-docker.yml`), runs only when `inputs.wheel-check` and the PR is a Dependabot PR on a `dependabot/docker/*` branch (same expression shape as the existing guard).
 - Each build job gains `needs: wheels` and keeps its existing condition, ANDed with `!cancelled() && needs.wheels.result != 'failure'`, so a skipped check does not skip the build (a plain `needs:` on a skipped job would).
 - README documents the new input and behaviour; CLAUDE.md's Dependabot convention line mentions the check.
 
