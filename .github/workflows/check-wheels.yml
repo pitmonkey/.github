@@ -1,0 +1,87 @@
+name: Check wheels
+
+# Fails fast when a locked runtime dependency has no wheel for the Python version a
+# Dockerfile's base image moves to. Slim Python images ship no compiler, so a package
+# without a matching wheel makes `uv sync` die deep inside the image build; this check
+# answers the same question in seconds and names the package and platform.
+#
+# Reads the version from the last `FROM python:<X.Y>` line in the Dockerfile (a later
+# non-Python stage, e.g. nginx serving a built site, is fine) and the lock from
+# `build-context`. Skips with a notice when there is no Python base image, the tag is
+# templated, or there is no uv.lock. Git and editable requirements are left out, so no
+# token is needed. Called from build-docker.yml on Dependabot base-image PRs.
+
+on:
+  workflow_call:
+    inputs:
+      dockerfile:
+        description: Path to the Dockerfile, relative to the repo root
+        type: string
+        default: Dockerfile
+      build-context:
+        description: Directory holding uv.lock (the Docker build context)
+        type: string
+        default: "."
+      platforms:
+        description: Comma-separated uv --python-platform targets to check
+        type: string
+        default: x86_64-manylinux_2_28,aarch64-manylinux_2_28
+
+jobs:
+  check:
+    runs-on: pi-arm64
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Detect Python version
+        id: detect
+        env:
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          BUILD_CONTEXT: ${{ inputs.build-context }}
+        run: |
+          skip() { echo "::notice title=Wheel check skipped::$1"; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          line=$(grep -iE '^\s*FROM\s+(--\S+\s+)*python:' "$DOCKERFILE" | tail -n 1 || true)
+          [ -n "$line" ] || skip "no python base image in $DOCKERFILE"
+          version=$(sed -E 's/.*python:([0-9]+\.[0-9]+).*/\1/I' <<< "$line")
+          [[ "$version" =~ ^[0-9]+\.[0-9]+$ ]] || skip "python tag in $DOCKERFILE is not a literal version"
+          [ -f "$BUILD_CONTEXT/uv.lock" ] || skip "no uv.lock in $BUILD_CONTEXT"
+          echo "Target Python $version from: $line"
+          { echo "version=$version"; echo "skip=false"; } >> "$GITHUB_OUTPUT"
+
+      - uses: astral-sh/setup-uv@v10.3.3
+        if: steps.detect.outputs.skip != 'true'
+
+      - name: Check wheels
+        if: steps.detect.outputs.skip != 'true'
+        env:
+          BUILD_CONTEXT: ${{ inputs.build-context }}
+          PLATFORMS: ${{ inputs.platforms }}
+          VERSION: ${{ steps.detect.outputs.version }}
+        run: |
+          cd "$BUILD_CONTEXT"
+          reqs=$(uv export --frozen --no-dev --no-hashes --no-emit-project -q \
+            | grep -vE '(^-e |@ git\+|^git\+)' || true)
+          failed=0
+          IFS=',' read -ra targets <<< "$PLATFORMS"
+          for platform in "${targets[@]}"; do
+            if out=$(uv pip compile - --no-build --python-version "$VERSION" \
+                --python-platform "$platform" -q -o /dev/null <<< "$reqs" 2>&1); then
+              echo "OK: every runtime dependency has a wheel for Python $VERSION on $platform"
+            else
+              failed=1
+              echo "::error title=Missing wheels::Python $VERSION on $platform"
+              echo "$out"
+              {
+                echo "### Missing wheels: Python $VERSION on \`$platform\`"
+                echo '```'
+                echo "$out"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          exit "$failed"
