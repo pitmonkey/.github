@@ -53,7 +53,7 @@ jobs:
           echo "Target Python $version from: $line"
           { echo "version=$version"; echo "skip=false"; } >> "$GITHUB_OUTPUT"
 
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
         if: steps.detect.outputs.skip != 'true'
 
       - name: Check wheels
